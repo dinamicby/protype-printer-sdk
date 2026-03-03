@@ -80,3 +80,15 @@ export {
   HTTP_PORT,
   STATUS_OBJECTS,
 } from './utils/constants';
+
+// ─── Routes ────────────────────────────────────────
+export {
+  HUB_ROUTES,
+  KIOSK_ROUTES,
+  buildPrinterUrl,
+  extractPrinterId,
+  isPrinterRoute,
+  getActiveTab,
+} from './routes';
+
+export type { PrinterTab } from './routes';
