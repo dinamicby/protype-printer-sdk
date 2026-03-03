@@ -46,6 +46,7 @@ export { useMotion } from './hooks/useMotion';
 export { useFiles } from './hooks/useFiles';
 export { useFilament } from './hooks/useFilament';
 export { useMacros } from './hooks/useMacros';
+export { usePrintHistory } from './hooks/usePrintHistory';
 
 // Hook types
 export type { PrinterStateValue } from './hooks/usePrinterState';
@@ -56,6 +57,7 @@ export type { MotionValue, JogParams } from './hooks/useMotion';
 export type { FilesValue } from './hooks/useFiles';
 export type { FilamentValue } from './hooks/useFilament';
 export type { MacrosValue } from './hooks/useMacros';
+export type { PrintHistoryValue, PrintHistoryStats } from './hooks/usePrintHistory';
 
 // ─── Utilities ──────────────────────────────────────
 export {
