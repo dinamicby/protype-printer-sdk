@@ -92,7 +92,11 @@ export const KIOSK_ROUTES = {
 
 // ─── URL Builders ───────────────────────────────────────────
 
-export type PrinterTab = 'files' | 'history' | 'console' | 'settings';
+export type PrinterTab =
+  | 'files' | 'history' | 'console' | 'settings'
+  | 'filacore' | 'jobs' | 'webcam' | 'viewer'
+  | 'bedmesh' | 'calibration' | 'config' | 'system'
+  | 'spoolman' | 'timelapse';
 
 /**
  * Build a ProtypeHub printer URL.
@@ -148,6 +152,11 @@ export function getActiveTab(pathname: string): PrinterTab | null {
   const match = pathname.match(/^\/printer\/[^/]+\/(\w+)$/);
   if (!match) return null;
   const tab = match[1] as PrinterTab;
-  const validTabs: PrinterTab[] = ['files', 'history', 'console', 'settings'];
+  const validTabs: PrinterTab[] = [
+    'files', 'history', 'console', 'settings',
+    'filacore', 'jobs', 'webcam', 'viewer',
+    'bedmesh', 'calibration', 'config', 'system',
+    'spoolman', 'timelapse',
+  ];
   return validTabs.includes(tab) ? tab : null;
 }

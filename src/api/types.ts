@@ -46,6 +46,12 @@ export interface TemperatureData {
   heaterBed: HeaterState | null;
   /** Optional heated chamber */
   heaterChamber: HeaterState | null;
+  /** Optional drying chamber 1 (generic_heater drying_chamber_1) */
+  dryingChamber1: HeaterState | null;
+  /** Optional drying chamber 2 (generic_heater drying_chamber_2) */
+  dryingChamber2: HeaterState | null;
+  /** Camera/enclosure temperature sensor */
+  bedGlass: HeaterState | null;
 }
 
 // ─── Toolhead / Motion ─────────────────────────────────────

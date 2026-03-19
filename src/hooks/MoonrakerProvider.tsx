@@ -146,6 +146,9 @@ export function MoonrakerProvider({
           extruder1: null,
           heater_bed: null,
           'heater_generic heater_chamber': null,
+          'heater_generic drying_chamber_1': null,
+          'heater_generic drying_chamber_2': null,
+          'temperature_sensor bed_glass': null,
         }).catch(() => {});
       }
     });
@@ -252,6 +255,30 @@ function mergeStatusUpdate(
     next.temperatures = {
       ...prev.temperatures,
       heaterBed: mergeHeater(prev.temperatures.heaterBed, update.heater_bed),
+    };
+  }
+  if (update['heater_generic heater_chamber']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      heaterChamber: mergeHeater(prev.temperatures.heaterChamber, update['heater_generic heater_chamber']),
+    };
+  }
+  if (update['heater_generic drying_chamber_1']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      dryingChamber1: mergeHeater(prev.temperatures.dryingChamber1, update['heater_generic drying_chamber_1']),
+    };
+  }
+  if (update['heater_generic drying_chamber_2']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      dryingChamber2: mergeHeater(prev.temperatures.dryingChamber2, update['heater_generic drying_chamber_2']),
+    };
+  }
+  if (update['temperature_sensor bed_glass']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      bedGlass: mergeHeater(prev.temperatures.bedGlass, update['temperature_sensor bed_glass']),
     };
   }
 

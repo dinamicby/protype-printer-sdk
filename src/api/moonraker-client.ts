@@ -153,6 +153,9 @@ export class MoonrakerClient {
       'extruder1',
       'heater_bed',
       'heater_generic heater_chamber',
+      'heater_generic drying_chamber_1',
+      'heater_generic drying_chamber_2',
+      'temperature_sensor bed_glass',
       ...fsNames.map((n) => `filament_switch_sensor ${n}`),
       ...fsNames.map((n) => `filament_motion_sensor ${n}`),
     ];
@@ -192,11 +195,14 @@ export class MoonrakerClient {
     };
 
     // Temperatures
-    const temperatures = {
+    const temperatures: TemperatureData = {
       extruder: this.parseHeater(obj.extruder),
       extruder1: this.parseHeater(obj.extruder1),
       heaterBed: this.parseHeater(obj.heater_bed),
       heaterChamber: this.parseHeater(obj['heater_generic heater_chamber']),
+      dryingChamber1: this.parseHeater(obj['heater_generic drying_chamber_1']),
+      dryingChamber2: this.parseHeater(obj['heater_generic drying_chamber_2']),
+      bedGlass: this.parseHeater(obj['temperature_sensor bed_glass']),
     };
 
     // Toolhead
