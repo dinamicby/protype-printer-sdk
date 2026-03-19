@@ -145,14 +145,14 @@ export function useTemperature(): TemperatureValue {
 
   const setDryingChamber1Temp = useCallback(
     async (target: number) => {
-      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=drying_chamber_1 TARGET=${target}`);
+      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Drying_Chamber_1 TARGET=${target}`);
     },
     [client],
   );
 
   const setDryingChamber2Temp = useCallback(
     async (target: number) => {
-      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=drying_chamber_2 TARGET=${target}`);
+      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Drying_Chamber_2 TARGET=${target}`);
     },
     [client],
   );

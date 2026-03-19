@@ -152,9 +152,9 @@ export class MoonrakerClient {
       'extruder',
       'extruder1',
       'heater_bed',
-      'heater_generic heater_chamber',
-      'heater_generic drying_chamber_1',
-      'heater_generic drying_chamber_2',
+      'heater_generic Active_Chamber',
+      'heater_generic Drying_Chamber_1',
+      'heater_generic Drying_Chamber_2',
       'temperature_sensor bed_glass',
       ...fsNames.map((n) => `filament_switch_sensor ${n}`),
       ...fsNames.map((n) => `filament_motion_sensor ${n}`),
@@ -199,9 +199,9 @@ export class MoonrakerClient {
       extruder: this.parseHeater(obj.extruder),
       extruder1: this.parseHeater(obj.extruder1),
       heaterBed: this.parseHeater(obj.heater_bed),
-      heaterChamber: this.parseHeater(obj['heater_generic heater_chamber']),
-      dryingChamber1: this.parseHeater(obj['heater_generic drying_chamber_1']),
-      dryingChamber2: this.parseHeater(obj['heater_generic drying_chamber_2']),
+      heaterChamber: this.parseHeater(obj['heater_generic Active_Chamber']),
+      dryingChamber1: this.parseHeater(obj['heater_generic Drying_Chamber_1']),
+      dryingChamber2: this.parseHeater(obj['heater_generic Drying_Chamber_2']),
       bedGlass: this.parseHeater(obj['temperature_sensor bed_glass']),
     };
 
@@ -278,7 +278,7 @@ export class MoonrakerClient {
   }
 
   async setChamberTemp(target: number): Promise<ApiResult<void>> {
-    return this.sendGcode(`SET_HEATER_TEMPERATURE HEATER=heater_chamber TARGET=${target}`);
+    return this.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Active_Chamber TARGET=${target}`);
   }
 
   // ─── G-code ────────────────────────────────────────────
