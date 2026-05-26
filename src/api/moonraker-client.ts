@@ -3,7 +3,12 @@
  *
  * Works in both browser (React renderer) and Node.js (Electron main) contexts
  * using native fetch(). No Electron or axios dependency.
+ *
+ * On iOS, requests to CGNAT VPN addresses (100.64.x.x) are routed through
+ * NativeHTTPModule which uses Network.framework NWConnection to bypass ATS,
+ * since NSAllowsArbitraryLoads does not exempt NSURLSession on iOS 26+.
  */
+import { NativeModules, Platform } from 'react-native';
 import type {
   MoonrakerConfig,
   ApiResult,
@@ -18,6 +23,7 @@ import type {
   GcodeMacro,
   FilamentSensorState,
   Thumbnail,
+  TemperatureData,
 } from './types';
 
 // ─── Default Config ────────────────────────────────────────
@@ -61,11 +67,71 @@ export class MoonrakerClient {
 
   // ─── Low-level HTTP ────────────────────────────────────
 
+  /**
+   * Returns true when requests to this URL should use NativeHTTPModule
+   * (Network.framework NWConnection) instead of fetch() to bypass iOS ATS.
+   * Applies to CGNAT VPN addresses (100.64.0.0/10) on iOS.
+   */
+  private shouldUseNativeHTTP(url: string): boolean {
+    if (Platform.OS !== 'ios') return false;
+    if (!NativeModules.NativeHTTPModule) return false;
+    try {
+      const host = new URL(url).hostname;
+      // 100.64.0.0/10 — first octet 100, second octet 64–127
+      const parts = host.split('.').map(Number);
+      return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+    } catch {
+      return false;
+    }
+  }
+
+  private async nativeRequest<T>(
+    url: string,
+    options: RequestInit = {},
+  ): Promise<ApiResult<T>> {
+    const method = (options.method ?? 'GET').toUpperCase();
+    const body = options.body != null ? String(options.body) : null;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> ?? {}),
+    };
+
+    try {
+      const result: { status: number; body: string } =
+        await NativeModules.NativeHTTPModule.request(url, method, headers, body);
+
+      if (result.status >= 400) {
+        return { success: false, error: `HTTP ${result.status}` };
+      }
+
+      const json = JSON.parse(result.body);
+      return { success: true, data: json.result ?? json };
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? 'NativeHTTP error' };
+    }
+  }
+
   private async request<T>(
     path: string,
     options: RequestInit = {},
   ): Promise<ApiResult<T>> {
     const url = `${this.baseUrl}${path}`;
+
+    if (this.shouldUseNativeHTTP(url)) {
+      let lastError = 'Unknown error';
+      for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+        const result = await this.nativeRequest<T>(url, options);
+        if (result.success) return result;
+        lastError = result.error ?? lastError;
+        // Don't retry 4xx
+        if (lastError.startsWith('HTTP 4')) return result;
+        if (attempt < this.maxRetries) {
+          await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
+        }
+      }
+      return { success: false, error: lastError };
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
 
@@ -102,7 +168,7 @@ export class MoonrakerClient {
           : err?.message ?? 'Network error';
 
         if (attempt < this.maxRetries) {
-          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
         }
       }
     }
@@ -158,6 +224,7 @@ export class MoonrakerClient {
       'temperature_sensor bed_glass',
       ...fsNames.map((n) => `filament_switch_sensor ${n}`),
       ...fsNames.map((n) => `filament_motion_sensor ${n}`),
+      'bed_mesh',
     ];
 
     const query = objects.map((o) => encodeURIComponent(o)).join('&');
@@ -166,6 +233,30 @@ export class MoonrakerClient {
 
     const status = res.data.status ?? res.data;
     return { success: true, data: this.parsePrinterStatus(status) };
+  }
+
+  // ─── Bed Size from Klipper Config ───────────────────────
+
+  /**
+   * Read printer bed dimensions from Klipper's `configfile.config` block.
+   * Returns null if the config doesn't have stepper position_max values.
+   */
+  async getBedSize(): Promise<ApiResult<[number, number, number]>> {
+    const res = await this.get<any>('/printer/objects/query?configfile');
+    if (!res.success || !res.data) return res as ApiResult<[number, number, number]>;
+    const cfg = res.data?.status?.configfile?.config;
+    if (!cfg) return { success: false, error: 'configfile.config missing' };
+    const num = (v: unknown): number | null => {
+      const n = typeof v === 'string' ? parseFloat(v) : (typeof v === 'number' ? v : NaN);
+      return Number.isFinite(n) ? n : null;
+    };
+    const x = num(cfg?.stepper_x?.position_max);
+    const y = num(cfg?.stepper_y?.position_max);
+    const z = num(cfg?.stepper_z?.position_max);
+    if (x == null || y == null || z == null) {
+      return { success: false, error: 'stepper position_max not found' };
+    }
+    return { success: true, data: [x, y, z] };
   }
 
   private parsePrinterStatus(obj: Record<string, any>): PrinterStatus {
@@ -208,6 +299,8 @@ export class MoonrakerClient {
     // Toolhead
     const th = obj.toolhead ?? {};
     const pos = th.position ?? [0, 0, 0, 0];
+    const axisMin = Array.isArray(th.axis_minimum) ? th.axis_minimum : null;
+    const axisMax = Array.isArray(th.axis_maximum) ? th.axis_maximum : null;
     const toolhead = {
       position: { x: pos[0] ?? 0, y: pos[1] ?? 0, z: pos[2] ?? 0, e: pos[3] ?? 0 },
       homed: th.homed_axes
@@ -218,6 +311,12 @@ export class MoonrakerClient {
       printTime: Number(th.print_time ?? 0),
       estimatedPrintTime: Number(th.estimated_print_time ?? 0),
       activeExtruder: th.extruder ?? 'extruder',
+      axisMinimum: axisMin
+        ? { x: Number(axisMin[0] ?? 0), y: Number(axisMin[1] ?? 0), z: Number(axisMin[2] ?? 0) }
+        : null,
+      axisMaximum: axisMax
+        ? { x: Number(axisMax[0] ?? 0), y: Number(axisMax[1] ?? 0), z: Number(axisMax[2] ?? 0) }
+        : null,
     };
 
     // Filament sensors (FS1..FS8)
@@ -243,6 +342,17 @@ export class MoonrakerClient {
       ? Math.max(0, Math.round(elapsed * (1 / progress - 1)))
       : null;
 
+    // Bed mesh
+    const bm = obj.bed_mesh;
+    const bedMesh = bm ? {
+      profileName: bm.profile_name ?? '',
+      meshMin: bm.mesh_min ?? [0, 0],
+      meshMax: bm.mesh_max ?? [0, 0],
+      probedMatrix: bm.probed_matrix ?? [],
+      meshMatrix: bm.mesh_matrix ?? [],
+      profiles: bm.profiles ?? {},
+    } : null;
+
     return {
       klipperState: 'ready',
       printStats,
@@ -250,6 +360,7 @@ export class MoonrakerClient {
       toolhead,
       virtualSdCard,
       filamentSensors,
+      bedMesh,
       progress,
       eta: etaSeconds !== null ? new Date(Date.now() + etaSeconds * 1000) : null,
       elapsedSeconds: elapsed,
@@ -285,6 +396,20 @@ export class MoonrakerClient {
 
   async sendGcode(script: string): Promise<ApiResult<void>> {
     return this.post('/printer/gcode/script', { script });
+  }
+
+  /**
+   * Fetch cached G-code console history from Moonraker's gcode_store.
+   * Returns an array of {type, message, time} entries.
+   */
+  async getGcodeStore(count = 200): Promise<ApiResult<{type: string; message: string; time: number}[]>> {
+    const result = await this.get<{gcode_store: {type: string; message: string; time: number}[]}>(
+      `/server/gcode_store?count=${count}`,
+    );
+    if (result.success && result.data) {
+      return {success: true, data: result.data.gcode_store ?? []};
+    }
+    return {success: false, error: result.error};
   }
 
   // ─── Motion ────────────────────────────────────────────
@@ -425,7 +550,7 @@ export class MoonrakerClient {
     root = 'gcodes',
   ): Promise<ApiResult<void>> {
     const formData = new FormData();
-    formData.append('file', file, filename);
+    (formData as any).append('file', file, filename);
     formData.append('root', root);
 
     const url = `${this.baseUrl}/server/files/upload`;
@@ -441,6 +566,24 @@ export class MoonrakerClient {
   /** Get thumbnail URL for a G-code file */
   getThumbnailUrl(relativePath: string): string {
     return `${this.baseUrl}/server/files/gcodes/${relativePath}`;
+  }
+
+  /**
+   * Fetch a thumbnail image as a data: URI via NativeHTTPModule (bypasses ATS).
+   * Falls back to the regular HTTP URL on non-iOS or when NativeHTTPModule is unavailable.
+   */
+  async fetchThumbnailDataUri(relativePath: string): Promise<string | null> {
+    const url = this.getThumbnailUrl(relativePath);
+    if (this.shouldUseNativeHTTP(url)) {
+      try {
+        const dataUri: string = await NativeModules.NativeHTTPModule.fetchBase64(url);
+        return dataUri;
+      } catch {
+        return null;
+      }
+    }
+    // Non-iOS or non-CGNAT: return regular URL (Image can fetch it)
+    return url;
   }
 
   // ─── Print History ─────────────────────────────────────
@@ -466,6 +609,133 @@ export class MoonrakerClient {
     }));
 
     return { success: true, data: history };
+  }
+
+  // ─── Config Files ────────────────────────────────────────
+
+  async listConfigFiles(): Promise<ApiResult<{path: string; filename: string; size: number; modified: number}[]>> {
+    const res = await this.get<any>('/server/files/list?root=config');
+    if (!res.success) return { success: false, error: res.error };
+    const files = (res.data ?? []).map((f: any) => {
+      const p = f.path ?? f.filename ?? '';
+      return {
+        path: p,
+        filename: p.split('/').pop() || p,
+        size: f.size ?? 0,
+        modified: f.modified ?? 0,
+      };
+    });
+    return { success: true, data: files };
+  }
+
+  async getConfigFileContent(filename: string): Promise<ApiResult<string>> {
+    const url = `${this.baseUrl}/server/files/config/${encodeURIComponent(filename)}`;
+    try {
+      if (this.shouldUseNativeHTTP(url)) {
+        // Use NativeHTTPModule directly — config files are plain text, not JSON
+        const result: { status: number; body: string } =
+          await NativeModules.NativeHTTPModule.request(url, 'GET', {}, null);
+        if (result.status >= 400) return { success: false, error: `HTTP ${result.status}` };
+        return { success: true, data: result.body ?? '' };
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeout);
+      const resp = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+      const text = await resp.text();
+      return { success: true, data: text };
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? 'Failed to read file' };
+    }
+  }
+
+  async saveConfigFile(filename: string, content: string): Promise<ApiResult<void>> {
+    const url = `${this.baseUrl}/server/files/upload`;
+    try {
+      const formData = new FormData();
+      (formData as any).append('file', new Blob([content]), filename);
+      formData.append('root', 'config');
+      const resp = await fetch(url, { method: 'POST', body: formData });
+      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? 'Failed to save file' };
+    }
+  }
+
+  // ─── Job Queue ────────────────────────────────────────
+
+  async getJobQueue(): Promise<ApiResult<{queued_jobs: any[]; queue_state: string}>> {
+    return this.get<{queued_jobs: any[]; queue_state: string}>('/server/job_queue/status');
+  }
+
+  async enqueueJob(filenames: string[]): Promise<ApiResult<void>> {
+    return this.request('/server/job_queue/job', { method: 'POST', body: JSON.stringify({ filenames }) });
+  }
+
+  async deleteQueueJob(jobIds: string[]): Promise<ApiResult<void>> {
+    return this.request(`/server/job_queue/job?job_ids=${jobIds.join(',')}`, { method: 'DELETE' });
+  }
+
+  async startQueue(): Promise<ApiResult<void>> {
+    return this.request('/server/job_queue/start', { method: 'POST' });
+  }
+
+  async pauseQueue(): Promise<ApiResult<void>> {
+    return this.request('/server/job_queue/pause', { method: 'POST' });
+  }
+
+  async clearQueue(): Promise<ApiResult<void>> {
+    return this.request('/server/job_queue/job', { method: 'DELETE' });
+  }
+
+  // ─── System Info ────────────────────────────────────────
+
+  async getSystemInfo(): Promise<ApiResult<any>> {
+    const res = await this.get<any>('/machine/system_info');
+    if (!res.success) return res;
+    const raw = res.data?.system_info ?? res.data ?? {};
+    const ci = raw.cpu_info;
+    return { success: true, data: {
+      cpuInfo: ci ? { cpuCount: ci.cpu_count, model: ci.model ?? ci.processor ?? '', totalMemory: ci.total_memory ?? 0 } : undefined,
+      sdInfo: raw.sd_info,
+      distribution: raw.distribution,
+      network: raw.network,
+      serviceState: raw.service_state ? Object.fromEntries(
+        Object.entries(raw.service_state).map(([k, v]: [string, any]) => [k, { activeState: v.active_state, subState: v.sub_state }])
+      ) : undefined,
+    }};
+  }
+
+  async getProcStats(): Promise<ApiResult<any>> {
+    const res = await this.get<any>('/machine/proc_stats');
+    if (!res.success) return res;
+    const raw = res.data ?? {};
+    return { success: true, data: {
+      cpuTemp: raw.cpu_temp,
+      systemCpuUsage: raw.system_cpu_usage,
+      systemMemory: raw.system_memory,
+      systemUptime: raw.system_uptime,
+      websocketConnections: raw.websocket_connections,
+      throttledState: raw.throttled_state ? { bits: raw.throttled_state.bits, flags: raw.throttled_state.flags ?? [] } : undefined,
+    }};
+  }
+
+  async restartService(service: string): Promise<ApiResult<void>> {
+    return this.request(`/machine/services/restart?service=${service}`, { method: 'POST' });
+  }
+
+  async restartServer(): Promise<ApiResult<void>> {
+    return this.request('/server/restart', { method: 'POST' });
+  }
+
+  async rebootHost(): Promise<ApiResult<void>> {
+    return this.request('/machine/reboot', { method: 'POST' });
+  }
+
+  async shutdownHost(): Promise<ApiResult<void>> {
+    return this.request('/machine/shutdown', { method: 'POST' });
   }
 
   // ─── Macros ────────────────────────────────────────────
