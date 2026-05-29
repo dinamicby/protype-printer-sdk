@@ -40,6 +40,11 @@ export interface HeaterState {
   power: number;
 }
 
+export interface HeaterLimits {
+  minTemp: number;
+  maxTemp: number;
+}
+
 export interface TemperatureData {
   extruder: HeaterState | null;
   extruder1: HeaterState | null;
@@ -50,6 +55,10 @@ export interface TemperatureData {
   dryingChamber1: HeaterState | null;
   /** Optional drying chamber 2 (generic_heater drying_chamber_2) */
   dryingChamber2: HeaterState | null;
+  /** Optional drying chamber 3 (generic_heater drying_chamber_3) */
+  dryingChamber3: HeaterState | null;
+  /** Optional drying chamber 4 (generic_heater drying_chamber_4) */
+  dryingChamber4: HeaterState | null;
   /** Camera/enclosure temperature sensor */
   bedGlass: HeaterState | null;
 }
@@ -98,6 +107,33 @@ export interface VirtualSdCard {
   fileSize: number;
 }
 
+// ─── Display Status (slicer-emitted M73 progress + message) ───
+export interface DisplayStatus {
+  /** 0..1, slicer-emitted progress via M73 — more accurate than vsd. */
+  progress: number;
+  /** Slicer "message" (M117) shown on physical screen. */
+  message: string;
+}
+
+// ─── G-code Move (speed factor, position) ─────────────────────
+export interface GcodeMove {
+  /** User's M220 / set_velocity_limit scale, 1.0 = 100%. */
+  speedFactor: number;
+  /** M221 extrusion scale. */
+  extrudeFactor: number;
+  /** Current commanded speed in mm/s. */
+  speed: number;
+}
+
+// ─── Fan ───────────────────────────────────────────────────
+
+export interface FanState {
+  /** Current fan speed, 0.0–1.0 (Klipper reports as fraction). */
+  speed: number;
+  /** Tachometer reading in RPM, null if tach not configured. */
+  rpm: number | null;
+}
+
 // ─── Filament Sensors ──────────────────────────────────────
 
 export interface FilamentSensorState {
@@ -114,6 +150,9 @@ export interface PrinterStatus {
   temperatures: TemperatureData;
   toolhead: ToolheadState;
   virtualSdCard: VirtualSdCard;
+  displayStatus: DisplayStatus;
+  gcodeMove: GcodeMove;
+  fan: FanState | null;
   filamentSensors: FilamentSensorState[];
   /** Computed fields */
   progress: number;
@@ -199,6 +238,7 @@ export type MoonrakerEventType =
   | 'notify_klippy_shutdown'
   | 'notify_klippy_disconnected'
   | 'notify_filelist_changed'
+  | 'notify_history_changed'
   | 'notify_update_response'
   | 'notify_proc_stat_update';
 

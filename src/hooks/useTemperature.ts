@@ -32,6 +32,10 @@ export interface TemperatureValue {
   dryingChamber1: HeaterInfo | null;
   /** Drying chamber 2 — null if not present */
   dryingChamber2: HeaterInfo | null;
+  /** Drying chamber 3 — null if not present */
+  dryingChamber3: HeaterInfo | null;
+  /** Drying chamber 4 — null if not present */
+  dryingChamber4: HeaterInfo | null;
   /** Bed glass temperature sensor — null if not present */
   bedGlass: HeaterInfo | null;
 
@@ -50,6 +54,10 @@ export interface TemperatureValue {
   setDryingChamber1Temp: (target: number) => Promise<void>;
   /** Set drying chamber 2 temperature */
   setDryingChamber2Temp: (target: number) => Promise<void>;
+  /** Set drying chamber 3 temperature */
+  setDryingChamber3Temp: (target: number) => Promise<void>;
+  /** Set drying chamber 4 temperature */
+  setDryingChamber4Temp: (target: number) => Promise<void>;
   /** Turn off all heaters */
   cooldown: () => Promise<void>;
   /** Preheat to PLA defaults (200/60) */
@@ -100,6 +108,16 @@ export function useTemperature(): TemperatureValue {
   const dryingChamber2 = useMemo(
     () => toHeaterInfo(status?.temperatures?.dryingChamber2),
     [status?.temperatures?.dryingChamber2],
+  );
+
+  const dryingChamber3 = useMemo(
+    () => toHeaterInfo(status?.temperatures?.dryingChamber3),
+    [status?.temperatures?.dryingChamber3],
+  );
+
+  const dryingChamber4 = useMemo(
+    () => toHeaterInfo(status?.temperatures?.dryingChamber4),
+    [status?.temperatures?.dryingChamber4],
   );
 
   const bedGlass = useMemo(
@@ -157,6 +175,20 @@ export function useTemperature(): TemperatureValue {
     [client],
   );
 
+  const setDryingChamber3Temp = useCallback(
+    async (target: number) => {
+      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Drying_Chamber_3 TARGET=${target}`);
+    },
+    [client],
+  );
+
+  const setDryingChamber4Temp = useCallback(
+    async (target: number) => {
+      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Drying_Chamber_4 TARGET=${target}`);
+    },
+    [client],
+  );
+
   const cooldown = useCallback(async () => {
     await client.sendGcode('TURN_OFF_HEATERS');
   }, [client]);
@@ -183,6 +215,8 @@ export function useTemperature(): TemperatureValue {
     chamber,
     dryingChamber1,
     dryingChamber2,
+    dryingChamber3,
+    dryingChamber4,
     bedGlass,
     setExtruderTemp,
     setExtruderTempWait,
@@ -191,6 +225,8 @@ export function useTemperature(): TemperatureValue {
     setChamberTemp,
     setDryingChamber1Temp,
     setDryingChamber2Temp,
+    setDryingChamber3Temp,
+    setDryingChamber4Temp,
     cooldown,
     preheatPLA,
     preheatABS,

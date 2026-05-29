@@ -42,6 +42,10 @@ export interface MotionValue {
   setSpeedFactor: (percent: number) => Promise<void>;
   /** Set extrusion flow factor (100 = normal) */
   setFlowFactor: (percent: number) => Promise<void>;
+
+  // ─── Fan ──────────────────────────────────────────
+  /** Set part cooling fan speed (M106), 0..100 percent. 0 sends M107. */
+  setFanSpeed: (percent: number) => Promise<void>;
 }
 
 export interface JogParams {
@@ -127,6 +131,19 @@ export function useMotion(): MotionValue {
     [client],
   );
 
+  const setFanSpeed = useCallback(
+    async (percent: number) => {
+      const clamped = Math.max(0, Math.min(100, percent));
+      if (clamped === 0) {
+        await client.sendGcode('M107');
+      } else {
+        const s = Math.round((clamped / 100) * 255);
+        await client.sendGcode(`M106 S${s}`);
+      }
+    },
+    [client],
+  );
+
   return {
     position,
     jog,
@@ -138,5 +155,6 @@ export function useMotion(): MotionValue {
     disableSteppers,
     setSpeedFactor,
     setFlowFactor,
+    setFanSpeed,
   };
 }

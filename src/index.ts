@@ -18,6 +18,7 @@ export type {
   MoonrakerConfig,
   PrinterStatus,
   HeaterState,
+  HeaterLimits,
   TemperatureData,
   ToolheadState,
   Position,
@@ -26,6 +27,7 @@ export type {
   PrintState,
   KlipperState,
   FilamentSensorState,
+  FanState,
   GcodeFile,
   GcodeFileMetadata,
   PrintHistoryJob,
@@ -54,7 +56,7 @@ export type { TemperatureValue, HeaterInfo } from './hooks/useTemperature';
 export type { PrintJobValue } from './hooks/usePrintJob';
 export type { GcodeValue, GcodeHistoryEntry } from './hooks/useGcode';
 export type { MotionValue, JogParams } from './hooks/useMotion';
-export type { FilesValue } from './hooks/useFiles';
+export type { FilesValue, UploadProgress } from './hooks/useFiles';
 export type { FilamentValue } from './hooks/useFilament';
 export type { MacrosValue } from './hooks/useMacros';
 export type { PrintHistoryValue, PrintHistoryStats } from './hooks/usePrintHistory';

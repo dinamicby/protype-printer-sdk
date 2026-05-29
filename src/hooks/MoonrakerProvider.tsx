@@ -141,6 +141,8 @@ export function MoonrakerProvider({
         ws.subscribeObjects({
           print_stats: null,
           virtual_sdcard: null,
+          display_status: null,
+          gcode_move: null,
           toolhead: null,
           extruder: null,
           extruder1: null,
@@ -148,7 +150,10 @@ export function MoonrakerProvider({
           'heater_generic Active_Chamber': null,
           'heater_generic Drying_Chamber_1': null,
           'heater_generic Drying_Chamber_2': null,
+          'heater_generic Drying_Chamber_3': null,
+          'heater_generic Drying_Chamber_4': null,
           'temperature_sensor bed_glass': null,
+          fan: null,
         }).catch(() => {});
       }
     });
@@ -211,7 +216,8 @@ function mergeStatusUpdate(
 ): PrinterStatus {
   const next = { ...prev };
 
-  // print_stats
+  // print_stats — includes info.{total_layer,current_layer} when the slicer
+  // emits SET_PRINT_STATS_INFO (PrusaSlicer 2.7+, SuperSlicer, OrcaSlicer).
   if (update.print_stats) {
     const ps = update.print_stats;
     next.printStats = {
@@ -222,6 +228,12 @@ function mergeStatusUpdate(
       ...(ps.print_duration !== undefined && { printDuration: ps.print_duration }),
       ...(ps.filament_used !== undefined && { filamentUsed: ps.filament_used }),
       ...(ps.message !== undefined && { message: ps.message }),
+      ...(ps.info !== undefined && {
+        info: {
+          totalLayer: ps.info.total_layer ?? prev.printStats.info?.totalLayer ?? null,
+          currentLayer: ps.info.current_layer ?? prev.printStats.info?.currentLayer ?? null,
+        },
+      }),
     };
     next.elapsedSeconds = next.printStats.printDuration;
   }
@@ -235,8 +247,33 @@ function mergeStatusUpdate(
       ...(vsd.is_active !== undefined && { isActive: vsd.is_active }),
       ...(vsd.file_position !== undefined && { filePosition: vsd.file_position }),
     };
-    next.progress = next.virtualSdCard.progress;
   }
+
+  // display_status — slicer-emitted M73 progress / M117 message.
+  if (update.display_status) {
+    const ds = update.display_status;
+    next.displayStatus = {
+      ...(prev.displayStatus ?? { progress: 0, message: '' }),
+      ...(ds.progress !== undefined && { progress: ds.progress }),
+      ...(ds.message !== undefined && { message: ds.message }),
+    };
+  }
+
+  // gcode_move
+  if (update.gcode_move) {
+    const gm = update.gcode_move;
+    next.gcodeMove = {
+      ...(prev.gcodeMove ?? { speedFactor: 1, extrudeFactor: 1, speed: 0 }),
+      ...(gm.speed_factor !== undefined && { speedFactor: gm.speed_factor }),
+      ...(gm.extrude_factor !== undefined && { extrudeFactor: gm.extrude_factor }),
+      ...(gm.speed !== undefined && { speed: gm.speed }),
+    };
+  }
+
+  // Computed progress — slicer wins, vsd is fallback.
+  next.progress = (next.displayStatus?.progress ?? 0) > 0
+    ? next.displayStatus.progress
+    : (next.virtualSdCard?.progress ?? 0);
 
   // Temperatures
   if (update.extruder) {
@@ -275,10 +312,34 @@ function mergeStatusUpdate(
       dryingChamber2: mergeHeater(prev.temperatures.dryingChamber2, update['heater_generic Drying_Chamber_2']),
     };
   }
+  if (update['heater_generic Drying_Chamber_3']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      dryingChamber3: mergeHeater(prev.temperatures.dryingChamber3, update['heater_generic Drying_Chamber_3']),
+    };
+  }
+  if (update['heater_generic Drying_Chamber_4']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      dryingChamber4: mergeHeater(prev.temperatures.dryingChamber4, update['heater_generic Drying_Chamber_4']),
+    };
+  }
   if (update['temperature_sensor bed_glass']) {
     next.temperatures = {
       ...prev.temperatures,
       bedGlass: mergeHeater(prev.temperatures.bedGlass, update['temperature_sensor bed_glass']),
+    };
+  }
+
+  // Part cooling fan
+  if (update.fan) {
+    const f = update.fan;
+    const prevFan = prev.fan ?? { speed: 0, rpm: null };
+    next.fan = {
+      speed: f.speed !== undefined ? Number(f.speed) : prevFan.speed,
+      rpm: f.rpm !== undefined
+        ? (f.rpm === null ? null : Number(f.rpm))
+        : prevFan.rpm,
     };
   }
 

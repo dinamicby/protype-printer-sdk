@@ -45,7 +45,7 @@ export interface PrintHistoryValue {
 // ─── Hook ──────────────────────────────────────────────────
 
 export function usePrintHistory(limit = 50): PrintHistoryValue {
-  const { client } = useMoonraker();
+  const { client, ws } = useMoonraker();
   const [jobs, setJobs] = useState<PrintHistoryJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +72,17 @@ export function usePrintHistory(limit = 50): PrintHistoryValue {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Auto-refresh on Moonraker history mutations. Without this the `jobs[0]`
+  // entry stays `in_progress` after a print finishes, which the UI renders
+  // as a generic "unknown" / red status until the user reloads.
+  // `notify_history_changed` fires with `{ action: 'added' | 'finished' | ... }`.
+  useEffect(() => {
+    if (!ws) return;
+    const onChange = () => { refresh(); };
+    ws.on('notify_history_changed', onChange);
+    return () => ws.off('notify_history_changed', onChange);
+  }, [ws, refresh]);
 
   const searchJobs = useCallback(
     (query: string) => {
