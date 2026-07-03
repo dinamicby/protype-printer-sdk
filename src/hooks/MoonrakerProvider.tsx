@@ -23,6 +23,7 @@ import {
 import { MoonrakerClient } from '../api/moonraker-client';
 import { MoonrakerWebSocket, wsUrlFromHttp } from '../api/moonraker-ws';
 import type { ConnectionMode, PrinterStatus, MoonrakerConfig } from '../api/types';
+import { createPoller } from '../utils/poller';
 
 // ─── Context Shape ─────────────────────────────────────────
 
@@ -117,14 +118,12 @@ export function MoonrakerProvider({
     }
   }, [client]);
 
-  // Poll on interval
+  // Poll on interval — createPoller guarantees no overlapping requests
+  // (a hung Moonraker used to stack timed-out requests every 2 s).
   useEffect(() => {
-    // Initial fetch
-    refresh();
-
-    const interval = client.pollInterval;
-    const timer = setInterval(refresh, interval);
-    return () => clearInterval(timer);
+    const poller = createPoller(refresh, client.pollInterval);
+    poller.start();
+    return () => poller.stop();
   }, [refresh, client.pollInterval]);
 
   // ─── WebSocket ───────────────────────────────────────

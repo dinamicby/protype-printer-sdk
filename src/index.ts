@@ -76,6 +76,8 @@ export {
 
 export * as gcode from './utils/gcode-builder';
 
+export { createPoller } from './utils/poller';
+
 export {
   ENDPOINTS,
   POLL_INTERVALS,
