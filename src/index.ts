@@ -98,3 +98,7 @@ export {
 } from './routes';
 
 export type { PrinterTab } from './routes';
+
+// ─── Store ──────────────────────────────────────────
+export { createPrinterStore, type PrinterStore, type PrinterStoreState } from './store/printer-store';
+export { reconcileStatus } from './store/reconcile';
