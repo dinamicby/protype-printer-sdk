@@ -69,12 +69,11 @@ export class MoonrakerClient {
     options: RequestInit = {},
   ): Promise<ApiResult<T>> {
     const url = `${this.baseUrl}${path}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeout);
-
     let lastError: string = 'Unknown error';
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeout);
       try {
         const resp = await fetch(url, {
           ...options,
@@ -84,8 +83,6 @@ export class MoonrakerClient {
             ...options.headers,
           },
         });
-
-        clearTimeout(timer);
 
         if (!resp.ok) {
           lastError = `HTTP ${resp.status}: ${resp.statusText}`;
@@ -99,7 +96,6 @@ export class MoonrakerClient {
         const json = await resp.json();
         return { success: true, data: json.result ?? json };
       } catch (err: any) {
-        clearTimeout(timer);
         lastError = err?.name === 'AbortError'
           ? `Request timed out after ${this.timeout}ms`
           : err?.message ?? 'Network error';
@@ -107,6 +103,8 @@ export class MoonrakerClient {
         if (attempt < this.maxRetries) {
           await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
         }
+      } finally {
+        clearTimeout(timer);
       }
     }
 
