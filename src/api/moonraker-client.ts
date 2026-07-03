@@ -206,6 +206,42 @@ export class MoonrakerClient {
     };
   }
 
+  /**
+   * Klipper's own state + human-readable reason from `/printer/info`.
+   * `state` is authoritative (unlike the hardcoded klipperState in getPrinterStatus).
+   * `stateMessage` carries the shutdown/error reason text.
+   */
+  async getPrinterInfo(): Promise<ApiResult<{ state: KlipperState; stateMessage: string }>> {
+    const res = await this.get<any>('/printer/info');
+    if (!res.success || !res.data) return res as ApiResult<{ state: KlipperState; stateMessage: string }>;
+    const d = res.data;
+    return {
+      success: true,
+      data: {
+        state: (d.state as KlipperState) ?? 'ready',
+        stateMessage: typeof d.state_message === 'string' ? d.state_message : '',
+      },
+    };
+  }
+
+  /**
+   * Klipper config warnings (deprecated options, invalid sections) plus whether a
+   * SAVE_CONFIG is pending. Sourced from the `configfile` printer object.
+   */
+  async getConfigWarnings(): Promise<ApiResult<{ warnings: string[]; saveConfigPending: boolean }>> {
+    const res = await this.get<any>('/printer/objects/query?configfile');
+    if (!res.success || !res.data) return res as ApiResult<{ warnings: string[]; saveConfigPending: boolean }>;
+    const cf = res.data?.status?.configfile ?? {};
+    const raw = Array.isArray(cf.warnings) ? cf.warnings : [];
+    const warnings = raw
+      .map((w: any) => (typeof w === 'string' ? w : (w?.message ?? '')))
+      .filter((s: string) => s.trim().length > 0);
+    return {
+      success: true,
+      data: { warnings, saveConfigPending: cf.save_config_pending === true },
+    };
+  }
+
   // ─── Printer Status ────────────────────────────────────
 
   async getPrinterStatus(): Promise<ApiResult<PrinterStatus>> {
