@@ -9,7 +9,7 @@
  *   <span>{extruder.temperature}°C / {extruder.target}°C</span>
  */
 import { useMemo, useCallback } from 'react';
-import { useMoonraker } from './MoonrakerProvider';
+import { useMoonraker, usePrinterSelector } from './MoonrakerProvider';
 import type { HeaterState } from '../api/types';
 
 export interface HeaterInfo extends HeaterState {
@@ -78,51 +78,54 @@ function toHeaterInfo(h: HeaterState | null | undefined): HeaterInfo | null {
 }
 
 export function useTemperature(): TemperatureValue {
-  const { status, client } = useMoonraker();
+  // Commands need the (stable) REST client; the reactive temperature data
+  // comes from a narrow store slice so unrelated status ticks don't re-run.
+  const { client } = useMoonraker();
+  const temperatures = usePrinterSelector((s) => s.status?.temperatures);
 
   const extruder = useMemo(
-    () => toHeaterInfo(status?.temperatures?.extruder),
-    [status?.temperatures?.extruder],
+    () => toHeaterInfo(temperatures?.extruder),
+    [temperatures?.extruder],
   );
 
   const extruder1 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.extruder1),
-    [status?.temperatures?.extruder1],
+    () => toHeaterInfo(temperatures?.extruder1),
+    [temperatures?.extruder1],
   );
 
   const bed = useMemo(
-    () => toHeaterInfo(status?.temperatures?.heaterBed),
-    [status?.temperatures?.heaterBed],
+    () => toHeaterInfo(temperatures?.heaterBed),
+    [temperatures?.heaterBed],
   );
 
   const chamber = useMemo(
-    () => toHeaterInfo(status?.temperatures?.heaterChamber),
-    [status?.temperatures?.heaterChamber],
+    () => toHeaterInfo(temperatures?.heaterChamber),
+    [temperatures?.heaterChamber],
   );
 
   const dryingChamber1 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.dryingChamber1),
-    [status?.temperatures?.dryingChamber1],
+    () => toHeaterInfo(temperatures?.dryingChamber1),
+    [temperatures?.dryingChamber1],
   );
 
   const dryingChamber2 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.dryingChamber2),
-    [status?.temperatures?.dryingChamber2],
+    () => toHeaterInfo(temperatures?.dryingChamber2),
+    [temperatures?.dryingChamber2],
   );
 
   const dryingChamber3 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.dryingChamber3),
-    [status?.temperatures?.dryingChamber3],
+    () => toHeaterInfo(temperatures?.dryingChamber3),
+    [temperatures?.dryingChamber3],
   );
 
   const dryingChamber4 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.dryingChamber4),
-    [status?.temperatures?.dryingChamber4],
+    () => toHeaterInfo(temperatures?.dryingChamber4),
+    [temperatures?.dryingChamber4],
   );
 
   const bedGlass = useMemo(
-    () => toHeaterInfo(status?.temperatures?.bedGlass),
-    [status?.temperatures?.bedGlass],
+    () => toHeaterInfo(temperatures?.bedGlass),
+    [temperatures?.bedGlass],
   );
 
   const setExtruderTemp = useCallback(

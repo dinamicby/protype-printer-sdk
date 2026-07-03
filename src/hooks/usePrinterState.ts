@@ -8,7 +8,7 @@
  *   const { state, klipperState, isPrinting, isPaused, isIdle } = usePrinterState();
  */
 import { useMemo } from 'react';
-import { useMoonraker } from './MoonrakerProvider';
+import { usePrinterSelector } from './MoonrakerProvider';
 import type { PrintState, KlipperState, PrinterStatus } from '../api/types';
 
 export interface PrinterStateValue {
@@ -47,7 +47,10 @@ export interface PrinterStateValue {
 }
 
 export function usePrinterState(): PrinterStateValue {
-  const { status, isConnected, wsConnected, error } = useMoonraker();
+  const status = usePrinterSelector((s) => s.status);
+  const isConnected = usePrinterSelector((s) => s.isConnected);
+  const wsConnected = usePrinterSelector((s) => s.wsConnected);
+  const error = usePrinterSelector((s) => s.error);
 
   return useMemo(() => {
     const printState: PrintState = status?.printStats?.state ?? 'standby';

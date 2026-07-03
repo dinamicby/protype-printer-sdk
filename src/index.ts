@@ -39,7 +39,8 @@ export type {
 } from './api/types';
 
 // ─── React Hooks ────────────────────────────────────
-export { MoonrakerProvider, useMoonraker } from './hooks/MoonrakerProvider';
+export { MoonrakerProvider, useMoonraker, usePrinterSelector } from './hooks/MoonrakerProvider';
+export type { MoonrakerValue } from './hooks/MoonrakerProvider';
 export { usePrinterState } from './hooks/usePrinterState';
 export { useTemperature } from './hooks/useTemperature';
 export { usePrintJob } from './hooks/usePrintJob';
