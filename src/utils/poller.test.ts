@@ -32,4 +32,15 @@ describe('createPoller', () => {
     p.stop();
     vi.useRealTimers();
   });
+
+  test('rejecting fn does not escape and does not wedge the poller', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const p = createPoller(async () => { calls++; throw new Error('boom'); }, 1000);
+    p.start();
+    await vi.advanceTimersByTimeAsync(3500);
+    p.stop();
+    expect(calls).toBeGreaterThan(1); // running was reset each time, ticks kept firing
+    vi.useRealTimers();
+  });
 });

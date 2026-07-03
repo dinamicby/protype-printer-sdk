@@ -9,6 +9,10 @@ export function createPoller(fn: () => Promise<void>, intervalMs: number) {
     running = true;
     try {
       await fn();
+    } catch {
+      // A rejecting fn must not escape as an unhandledrejection — createPoller
+      // is a public export and the shell turns unhandledrejection into a fatal
+      // bootstrap screen. The caller owns error reporting inside fn.
     } finally {
       running = false;
     }
