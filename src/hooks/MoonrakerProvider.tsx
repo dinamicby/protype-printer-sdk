@@ -147,11 +147,21 @@ export function MoonrakerProvider({
 
   // Poll on interval — createPoller guarantees no overlapping requests
   // (a hung Moonraker used to stack timed-out requests every 2 s).
+  //
+  // Cadence is dynamic: while the WS is live, REST polling backs off to a
+  // 15 s heartbeat (a safety net against missed WS notifications); once the
+  // WS drops, it snaps back to client.pollInterval so the UI still updates
+  // promptly without a live push channel.
   useEffect(() => {
+    const HEARTBEAT_MS = 15_000;
     const poller = createPoller(refresh, client.pollInterval);
     poller.start();
-    return () => poller.stop();
-  }, [refresh, client.pollInterval]);
+    const unsub = store.subscribe(
+      (s) => s.wsConnected,
+      (wsConnected) => poller.setInterval(wsConnected ? HEARTBEAT_MS : client.pollInterval),
+    );
+    return () => { unsub(); poller.stop(); };
+  }, [refresh, client.pollInterval, store]);
 
   // ─── WebSocket ───────────────────────────────────────
 
