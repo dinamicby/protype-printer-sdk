@@ -91,9 +91,12 @@ export class MoonrakerWebSocket {
       this.reconnectCount = 0;
       this.emit('connection', { connected: true });
 
-      // Re-subscribe if we had previous subscriptions
+      // Re-subscribe if we had previous subscriptions.
+      // A rejection here must not escape: it becomes a global
+      // unhandledrejection and the shell's bootstrap handler turns it
+      // into a fatal full-screen error (see App.tsx history).
       if (Object.keys(this.subscribedObjects).length > 0) {
-        this.subscribeObjects(this.subscribedObjects);
+        this.subscribeObjects(this.subscribedObjects).catch(() => {});
       }
     };
 
