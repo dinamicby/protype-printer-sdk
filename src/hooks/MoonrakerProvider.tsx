@@ -139,7 +139,10 @@ export function MoonrakerProvider({
       // When WS connects, subscribe to printer objects
       if (data.connected) {
         const fsSub: Record<string, null> = {};
-        for (let i = 1; i <= 10; i++) fsSub[`filament_switch_sensor FS${i}`] = null;
+        for (let i = 1; i <= 10; i++) {
+          fsSub[`filament_switch_sensor FS${i}`] = null;
+          fsSub[`filament_motion_sensor FS${i}`] = null;
+        }
         ws.subscribeObjects({
           print_stats: null,
           virtual_sdcard: null,
