@@ -138,6 +138,8 @@ export function MoonrakerProvider({
 
       // When WS connects, subscribe to printer objects
       if (data.connected) {
+        const fsSub: Record<string, null> = {};
+        for (let i = 1; i <= 10; i++) fsSub[`filament_switch_sensor FS${i}`] = null;
         ws.subscribeObjects({
           print_stats: null,
           virtual_sdcard: null,
@@ -149,7 +151,9 @@ export function MoonrakerProvider({
           'heater_generic Drying_Chamber_1': null,
           'heater_generic Drying_Chamber_2': null,
           'temperature_sensor bed_glass': null,
+          save_variables: null,
           exclude_object: null,
+          ...fsSub,
         }).catch(() => {});
       }
     };
@@ -211,7 +215,7 @@ export function useMoonraker(): MoonrakerContextValue {
 
 // ─── Status Merge Helper ───────────────────────────────────
 
-function mergeStatusUpdate(
+export function mergeStatusUpdate(
   prev: PrinterStatus,
   update: Record<string, any>,
 ): PrinterStatus {
@@ -302,6 +306,39 @@ function mergeStatusUpdate(
         },
       };
     }
+  }
+
+  // Filament sensors — update existing by name, append new ones (immutable)
+  let sensorsTouched = false;
+  const nextSensors = prev.filamentSensors.map((s) => {
+    const raw = update[`filament_switch_sensor ${s.name}`] ?? update[`filament_motion_sensor ${s.name}`];
+    if (!raw) return s;
+    sensorsTouched = true;
+    return {
+      name: s.name,
+      enabled: raw.enabled ?? s.enabled,
+      filamentDetected: raw.filament_detected ?? raw.filament_present ?? s.filamentDetected,
+    };
+  });
+  const known = new Set(prev.filamentSensors.map((s) => s.name));
+  for (let i = 1; i <= 10; i++) {
+    const name = `FS${i}`;
+    if (known.has(name)) continue;
+    const raw = update[`filament_switch_sensor ${name}`] ?? update[`filament_motion_sensor ${name}`];
+    if (raw) {
+      sensorsTouched = true;
+      nextSensors.push({
+        name,
+        enabled: raw.enabled ?? true,
+        filamentDetected: raw.filament_detected ?? raw.filament_present ?? false,
+      });
+    }
+  }
+  if (sensorsTouched) next.filamentSensors = nextSensors;
+
+  // save_variables — merge partial variables map (immutable)
+  if (update.save_variables?.variables) {
+    next.saveVariables = {...prev.saveVariables, ...update.save_variables.variables};
   }
 
   // Recompute ETA
