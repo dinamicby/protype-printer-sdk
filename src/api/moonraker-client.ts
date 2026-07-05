@@ -35,6 +35,14 @@ const DEFAULTS = {
 
 // ─── Client ────────────────────────────────────────────────
 
+/** Extract Klipper save_variables.variables map from a raw objects/query result. */
+export function parseSaveVariables(
+  obj: Record<string, any>,
+): Record<string, number | string | boolean> {
+  const vars = obj?.save_variables?.variables;
+  return vars && typeof vars === 'object' ? {...vars} : {};
+}
+
 export class MoonrakerClient {
   private baseUrl: string;
   private timeout: number;
@@ -246,7 +254,7 @@ export class MoonrakerClient {
 
   async getPrinterStatus(): Promise<ApiResult<PrinterStatus>> {
     // Build query for all relevant objects
-    const fsNames = Array.from({ length: 8 }, (_, i) => `FS${i + 1}`);
+    const fsNames = Array.from({ length: 10 }, (_, i) => `FS${i + 1}`);
     const objects = [
       'print_stats',
       'virtual_sdcard',
@@ -258,6 +266,7 @@ export class MoonrakerClient {
       'heater_generic Drying_Chamber_1',
       'heater_generic Drying_Chamber_2',
       'temperature_sensor bed_glass',
+      'save_variables',
       ...fsNames.map((n) => `filament_switch_sensor ${n}`),
       ...fsNames.map((n) => `filament_motion_sensor ${n}`),
       'bed_mesh',
@@ -355,9 +364,9 @@ export class MoonrakerClient {
         : null,
     };
 
-    // Filament sensors (FS1..FS8)
+    // Filament sensors (FS1..FS10)
     const filamentSensors: FilamentSensorState[] = [];
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= 10; i++) {
       const sw = obj[`filament_switch_sensor FS${i}`];
       const mo = obj[`filament_motion_sensor FS${i}`];
       const sensor = sw ?? mo;
@@ -396,6 +405,7 @@ export class MoonrakerClient {
       toolhead,
       virtualSdCard,
       filamentSensors,
+      saveVariables: parseSaveVariables(obj),
       bedMesh,
       progress,
       eta: etaSeconds !== null ? new Date(Date.now() + etaSeconds * 1000) : null,
@@ -590,6 +600,66 @@ export class MoonrakerClient {
     formData.append('root', root);
 
     const url = `${this.baseUrl}/server/files/upload`;
+    try {
+      const resp = await fetch(url, { method: 'POST', body: formData });
+      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? 'Upload failed' };
+    }
+  }
+
+  /**
+   * Upload a local file (React Native) to Moonraker.
+   *
+   * Takes an RN file descriptor ({ uri, name }) from a document picker rather
+   * than a browser File. On CGNAT VPN printers (iOS), routes through
+   * NativeHTTPModule's multipart upload to bypass ATS; otherwise uses
+   * fetch + FormData. Set `startPrint` to have Moonraker begin printing
+   * immediately after upload.
+   */
+  async uploadGcodeFile(
+    file: { uri: string; name: string },
+    opts: { root?: string; startPrint?: boolean; requestId?: string } = {},
+  ): Promise<ApiResult<void>> {
+    const root = opts.root ?? 'gcodes';
+    const url = `${this.baseUrl}/server/files/upload`;
+
+    if (this.shouldUseNativeHTTP(url)) {
+      const fields: Record<string, string> = { root };
+      if (opts.startPrint) fields.print = 'true';
+      // requestId lets the caller subscribe to NativeHTTPProgress for live
+      // upload progress (see NativeHTTPModule.uploadFile).
+      const requestId =
+        opts.requestId ?? `up-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+      try {
+        const result: { status: number; body: string } =
+          await NativeModules.NativeHTTPModule.uploadFile(
+            requestId,
+            url,
+            file.uri,
+            file.name,
+            fields,
+          );
+        if (result.status >= 400) {
+          return { success: false, error: `HTTP ${result.status}` };
+        }
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, error: err?.message ?? 'Upload failed' };
+      }
+    }
+
+    // LAN / Android: plain fetch with multipart FormData.
+    const formData = new FormData();
+    formData.append('root', root);
+    if (opts.startPrint) formData.append('print', 'true');
+    (formData as any).append(
+      'file',
+      { uri: file.uri, name: file.name, type: 'application/octet-stream' },
+      file.name,
+    );
+
     try {
       const resp = await fetch(url, { method: 'POST', body: formData });
       if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
