@@ -133,7 +133,7 @@ export function MoonrakerProvider({
     if (disableWebSocket) return;
 
     // Listen for connection state
-    ws.on('connection', (data: any) => {
+    const handleConnection = (data: any) => {
       setWsConnected(data.connected === true);
 
       // When WS connects, subscribe to printer objects
@@ -149,23 +149,29 @@ export function MoonrakerProvider({
           'heater_generic Drying_Chamber_1': null,
           'heater_generic Drying_Chamber_2': null,
           'temperature_sensor bed_glass': null,
+          exclude_object: null,
         }).catch(() => {});
       }
-    });
+    };
 
     // Listen for real-time status updates
-    ws.on('status_update', (data: any) => {
+    const handleStatusUpdate = (data: any) => {
       if (!data) return;
       // Merge partial update into current status
       setStatus((prev) => {
         if (!prev) return prev;
         return mergeStatusUpdate(prev, data);
       });
-    });
+    };
+
+    ws.on('connection', handleConnection);
+    ws.on('status_update', handleStatusUpdate);
 
     ws.connect();
 
     return () => {
+      ws.off('connection', handleConnection);
+      ws.off('status_update', handleStatusUpdate);
       ws.disconnect();
     };
   }, [ws, disableWebSocket]);
