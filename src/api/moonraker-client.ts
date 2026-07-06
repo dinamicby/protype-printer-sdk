@@ -9,6 +9,7 @@
  * since NSAllowsArbitraryLoads does not exempt NSURLSession on iOS 26+.
  */
 import { NativeModules, Platform } from 'react-native';
+import RNFS from 'react-native-fs';
 import type {
   MoonrakerConfig,
   ApiResult,
@@ -41,6 +42,27 @@ export function parseSaveVariables(
 ): Record<string, number | string | boolean> {
   const vars = obj?.save_variables?.variables;
   return vars && typeof vars === 'object' ? {...vars} : {};
+}
+
+/**
+ * Build a human-readable error from an HTTP failure, digging Moonraker's real
+ * message out of the response body. Moonraker returns `{"error": {"message": ...}}`
+ * (e.g. a Klipper gcode error like "Unknown command:SAVE_VARIABLE"). Without this,
+ * callers only see a bare `HTTP 404` and the actual cause is lost.
+ */
+export function httpErrorMessage(status: number, body?: string, statusText?: string): string {
+  let detail = '';
+  if (body) {
+    try {
+      const j = JSON.parse(body);
+      detail = j?.error?.message ?? j?.message ?? (typeof j === 'string' ? j : '');
+    } catch {
+      detail = body;
+    }
+  }
+  detail = (detail || statusText || '').trim();
+  if (detail.length > 300) detail = `${detail.slice(0, 300)}…`;
+  return detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
 }
 
 export class MoonrakerClient {
@@ -109,7 +131,7 @@ export class MoonrakerClient {
         await NativeModules.NativeHTTPModule.request(url, method, headers, body);
 
       if (result.status >= 400) {
-        return { success: false, error: `HTTP ${result.status}` };
+        return { success: false, error: httpErrorMessage(result.status, result.body) };
       }
 
       const json = JSON.parse(result.body);
@@ -159,7 +181,10 @@ export class MoonrakerClient {
         clearTimeout(timer);
 
         if (!resp.ok) {
-          lastError = `HTTP ${resp.status}: ${resp.statusText}`;
+          // Surface Moonraker's real error body (e.g. Klipper gcode error) instead
+          // of a bare status — otherwise the actual cause is invisible to callers.
+          const errBody = await resp.text().catch(() => '');
+          lastError = httpErrorMessage(resp.status, errBody, resp.statusText);
           // Don't retry on 4xx client errors
           if (resp.status >= 400 && resp.status < 500) {
             return { success: false, error: lastError };
@@ -756,17 +781,27 @@ export class MoonrakerClient {
     }
   }
 
+  /**
+   * Save a config file's text content back to the printer.
+   *
+   * React Native's FormData cannot carry inline string/Blob parts — parts
+   * must be {uri, name, type} file references — so the content is written to
+   * a temp file and uploaded through the same path as gcode files, which also
+   * routes CGNAT printers through NativeHTTPModule (ATS blocks plain fetch).
+   */
   async saveConfigFile(filename: string, content: string): Promise<ApiResult<void>> {
-    const url = `${this.baseUrl}/server/files/upload`;
+    const safe = filename.replace(/[^\w.-]/g, '_');
+    const tmpPath = `${RNFS.CachesDirectoryPath}/cfg-upload-${Date.now()}-${safe}`;
     try {
-      const formData = new FormData();
-      (formData as any).append('file', new Blob([content]), filename);
-      formData.append('root', 'config');
-      const resp = await fetch(url, { method: 'POST', body: formData });
-      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
-      return { success: true };
+      await RNFS.writeFile(tmpPath, content, 'utf8');
+      return await this.uploadGcodeFile(
+        { uri: `file://${tmpPath}`, name: filename },
+        { root: 'config' },
+      );
     } catch (err: any) {
       return { success: false, error: err?.message ?? 'Failed to save file' };
+    } finally {
+      RNFS.unlink(tmpPath).catch(() => {});
     }
   }
 
