@@ -8,7 +8,7 @@
  *   const { progress, eta, filename, pause, resume, cancel } = usePrintJob();
  */
 import { useMemo, useCallback } from 'react';
-import { useMoonraker } from './MoonrakerProvider';
+import { useMoonraker, usePrinterSelector } from './MoonrakerProvider';
 import type { PrintState } from '../api/types';
 
 export interface PrintJobValue {
@@ -47,15 +47,18 @@ export interface PrintJobValue {
 }
 
 export function usePrintJob(): PrintJobValue {
-  const { status, client } = useMoonraker();
+  // Commands need the (stable) REST client; job data comes from narrow store
+  // slices whose references stay stable across unchanged ticks.
+  const { client } = useMoonraker();
+  const progressRaw = usePrinterSelector((s) => s.status?.progress);
+  const eta = usePrinterSelector((s) => s.status?.eta ?? null);
+  const elapsedSecondsRaw = usePrinterSelector((s) => s.status?.elapsedSeconds);
+  const printStats = usePrinterSelector((s) => s.status?.printStats);
+  const vsd = usePrinterSelector((s) => s.status?.virtualSdCard);
 
-  const state: PrintState = status?.printStats?.state ?? 'standby';
-  const progress = status?.progress ?? 0;
-  const eta = status?.eta ?? null;
-  const elapsedSeconds = status?.elapsedSeconds ?? 0;
-
-  const printStats = status?.printStats;
-  const vsd = status?.virtualSdCard;
+  const state: PrintState = printStats?.state ?? 'standby';
+  const progress = progressRaw ?? 0;
+  const elapsedSeconds = elapsedSecondsRaw ?? 0;
 
   const value = useMemo(
     () => ({

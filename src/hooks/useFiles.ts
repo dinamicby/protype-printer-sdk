@@ -11,6 +11,15 @@ import { useState, useCallback, useEffect } from 'react';
 import { useMoonraker } from './MoonrakerProvider';
 import type { GcodeFile, GcodeFileMetadata } from '../api/types';
 
+export interface UploadProgress {
+  /** Bytes sent so far */
+  loaded: number;
+  /** Total bytes to send */
+  total: number;
+  /** Filename being uploaded */
+  filename: string;
+}
+
 export interface FilesValue {
   /** List of G-code files */
   files: GcodeFile[];
@@ -18,6 +27,12 @@ export interface FilesValue {
   isLoading: boolean;
   /** Error message */
   error: string | null;
+
+  // ─── Upload state ─────────────────────────────────
+  /** Whether a file is currently uploading */
+  isUploading: boolean;
+  /** Real-time upload progress (null when not uploading) */
+  uploadProgress: UploadProgress | null;
 
   // ─── Actions ──────────────────────────────────────
   /** Refresh file list */
@@ -47,6 +62,8 @@ export function useFiles(): FilesValue {
   const [files, setFiles] = useState<GcodeFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -80,16 +97,29 @@ export function useFiles(): FilesValue {
 
   const uploadFile = useCallback(
     async (file: File, startAfterUpload = false): Promise<boolean> => {
-      const result = await client.uploadFile(file, file.name);
-      if (result.success) {
-        // Refresh list after upload
-        await refresh();
-        if (startAfterUpload) {
-          await client.startPrint(file.name);
+      setIsUploading(true);
+      setUploadProgress({ loaded: 0, total: file.size, filename: file.name });
+      try {
+        const result = await client.uploadFileWithProgress(
+          file,
+          file.name,
+          'gcodes',
+          (loaded, total) => {
+            setUploadProgress({ loaded, total, filename: file.name });
+          },
+        );
+        if (result.success) {
+          await refresh();
+          if (startAfterUpload) {
+            await client.startPrint(file.name);
+          }
+          return true;
         }
-        return true;
+        return false;
+      } finally {
+        setIsUploading(false);
+        setUploadProgress(null);
       }
-      return false;
     },
     [client, refresh],
   );
@@ -136,6 +166,8 @@ export function useFiles(): FilesValue {
     files,
     isLoading,
     error,
+    isUploading,
+    uploadProgress,
     refresh,
     getMetadata,
     uploadFile,

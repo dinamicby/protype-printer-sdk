@@ -18,11 +18,13 @@ import type {
   PrintHistoryJob,
   PrinterStatus,
   HeaterState,
+  HeaterLimits,
   PrintState,
   KlipperState,
   MoonrakerServerInfo,
   GcodeMacro,
   FilamentSensorState,
+  FanState,
   Thumbnail,
   TemperatureData,
 } from './types';
@@ -162,12 +164,11 @@ export class MoonrakerClient {
       return { success: false, error: lastError };
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeout);
-
     let lastError: string = 'Unknown error';
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeout);
       try {
         const resp = await fetch(url, {
           ...options,
@@ -177,8 +178,6 @@ export class MoonrakerClient {
             ...options.headers,
           },
         });
-
-        clearTimeout(timer);
 
         if (!resp.ok) {
           // Surface Moonraker's real error body (e.g. Klipper gcode error) instead
@@ -195,7 +194,6 @@ export class MoonrakerClient {
         const json = await resp.json();
         return { success: true, data: json.result ?? json };
       } catch (err: any) {
-        clearTimeout(timer);
         lastError = err?.name === 'AbortError'
           ? `Request timed out after ${this.timeout}ms`
           : err?.message ?? 'Network error';
@@ -203,6 +201,8 @@ export class MoonrakerClient {
         if (attempt < this.maxRetries) {
           await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
         }
+      } finally {
+        clearTimeout(timer);
       }
     }
 
@@ -283,6 +283,14 @@ export class MoonrakerClient {
     const objects = [
       'print_stats',
       'virtual_sdcard',
+      // display_status carries the slicer's M73 progress + remaining-time and
+      // M117 message; gcode_move carries speed/flow factors. Both are read by
+      // parsePrinterStatus below and subscribed to over WebSocket — but with
+      // WS disabled (REST-only polling) they MUST be queried here too, or
+      // progress silently falls back to virtual_sdcard's non-linear byte
+      // ratio (jumpy %/ETA) and speed/flow read a flat 100%.
+      'display_status',
+      'gcode_move',
       'toolhead',
       'extruder',
       'extruder1',
@@ -290,8 +298,11 @@ export class MoonrakerClient {
       'heater_generic Active_Chamber',
       'heater_generic Drying_Chamber_1',
       'heater_generic Drying_Chamber_2',
+      'heater_generic Drying_Chamber_3',
+      'heater_generic Drying_Chamber_4',
       'temperature_sensor bed_glass',
       'save_variables',
+      'fan',
       ...fsNames.map((n) => `filament_switch_sensor ${n}`),
       ...fsNames.map((n) => `filament_motion_sensor ${n}`),
       'bed_mesh',
@@ -355,6 +366,32 @@ export class MoonrakerClient {
       fileSize: Number(vsd.file_size ?? 0),
     };
 
+    // Display status — slicer-emitted M73 progress + M117 message.
+    // More accurate than vsd.progress when the slicer drives the
+    // percentage (especially with non-linear remaining-time estimates).
+    const ds = obj.display_status ?? {};
+    const displayStatus = {
+      progress: Number(ds.progress ?? 0),
+      message: ds.message ?? '',
+    };
+
+    // gcode_move — speed factor / extrude factor for Mainsail-style HUD.
+    const gm = obj.gcode_move ?? {};
+    const gcodeMove = {
+      speedFactor: Number(gm.speed_factor ?? 1),
+      extrudeFactor: Number(gm.extrude_factor ?? 1),
+      speed: Number(gm.speed ?? 0),
+    };
+
+    // Part cooling fan — Klipper [fan] section, speed is 0..1 fraction.
+    const fanObj = obj.fan;
+    const fan: FanState | null = fanObj && typeof fanObj.speed !== 'undefined'
+      ? {
+          speed: Number(fanObj.speed ?? 0),
+          rpm: fanObj.rpm !== null && fanObj.rpm !== undefined ? Number(fanObj.rpm) : null,
+        }
+      : null;
+
     // Temperatures
     const temperatures: TemperatureData = {
       extruder: this.parseHeater(obj.extruder),
@@ -363,6 +400,8 @@ export class MoonrakerClient {
       heaterChamber: this.parseHeater(obj['heater_generic Active_Chamber']),
       dryingChamber1: this.parseHeater(obj['heater_generic Drying_Chamber_1']),
       dryingChamber2: this.parseHeater(obj['heater_generic Drying_Chamber_2']),
+      dryingChamber3: this.parseHeater(obj['heater_generic Drying_Chamber_3']),
+      dryingChamber4: this.parseHeater(obj['heater_generic Drying_Chamber_4']),
       bedGlass: this.parseHeater(obj['temperature_sensor bed_glass']),
     };
 
@@ -405,8 +444,13 @@ export class MoonrakerClient {
       }
     }
 
-    // Computed
-    const progress = virtualSdCard.progress;
+    // Computed progress — prefer slicer's M73 (display_status) when present,
+    // fall back to virtual_sdcard's file-position ratio otherwise. The
+    // display_status path is what Mainsail / Fluidd surface and matches what
+    // the slicer told the printer the remaining-time is.
+    const progress = displayStatus.progress > 0
+      ? displayStatus.progress
+      : virtualSdCard.progress;
     const elapsed = printStats.printDuration;
     const etaSeconds = progress > 0
       ? Math.max(0, Math.round(elapsed * (1 / progress - 1)))
@@ -429,6 +473,9 @@ export class MoonrakerClient {
       temperatures,
       toolhead,
       virtualSdCard,
+      displayStatus,
+      gcodeMove,
+      fan,
       filamentSensors,
       saveVariables: parseSaveVariables(obj),
       bedMesh,
@@ -461,6 +508,34 @@ export class MoonrakerClient {
 
   async setChamberTemp(target: number): Promise<ApiResult<void>> {
     return this.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Active_Chamber TARGET=${target}`);
+  }
+
+  // ─── Heater Limits (from configfile) ───────────────────
+
+  /**
+   * Fetch printer config and extract min/max temperature limits per heater.
+   * Returns a map keyed by Klipper section name (e.g. "extruder", "heater_bed",
+   * "heater_generic Active_Chamber") to its {min_temp, max_temp} bounds.
+   */
+  async getHeaterLimits(): Promise<ApiResult<Record<string, HeaterLimits>>> {
+    const res = await this.get<any>('/printer/objects/query?configfile');
+    if (!res.success || !res.data) return { success: false, error: res.error };
+
+    const cfg =
+      res.data.status?.configfile?.config ??
+      res.data.configfile?.config ??
+      {};
+
+    const limits: Record<string, HeaterLimits> = {};
+    for (const [section, raw] of Object.entries<any>(cfg)) {
+      if (!raw || typeof raw !== 'object') continue;
+      if (raw.max_temp === undefined && raw.min_temp === undefined) continue;
+      const min = Number(raw.min_temp ?? 0);
+      const max = Number(raw.max_temp ?? 0);
+      if (!Number.isFinite(max) || max <= 0) continue;
+      limits[section] = { minTemp: Number.isFinite(min) ? min : 0, maxTemp: max };
+    }
+    return { success: true, data: limits };
   }
 
   // ─── G-code ────────────────────────────────────────────
@@ -620,18 +695,48 @@ export class MoonrakerClient {
     filename: string,
     root = 'gcodes',
   ): Promise<ApiResult<void>> {
-    const formData = new FormData();
-    (formData as any).append('file', file, filename);
-    formData.append('root', root);
+    return this.uploadFileWithProgress(file, filename, root);
+  }
 
-    const url = `${this.baseUrl}/server/files/upload`;
-    try {
-      const resp = await fetch(url, { method: 'POST', body: formData });
-      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
-      return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message ?? 'Upload failed' };
-    }
+  /** Upload a G-code file with real-time progress callback */
+  uploadFileWithProgress(
+    file: File | Blob,
+    filename: string,
+    root = 'gcodes',
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<ApiResult<void>> {
+    return new Promise((resolve) => {
+      const formData = new FormData();
+      (formData as any).append('file', file, filename);
+      formData.append('root', root);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${this.baseUrl}/server/files/upload`);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(e.loaded, e.total);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ success: true });
+        } else {
+          resolve({ success: false, error: `HTTP ${xhr.status}` });
+        }
+      };
+
+      xhr.onerror = () => {
+        resolve({ success: false, error: 'Ошибка сети' });
+      };
+
+      xhr.ontimeout = () => {
+        resolve({ success: false, error: 'Таймаут загрузки' });
+      };
+
+      xhr.send(formData);
+    });
   }
 
   /**

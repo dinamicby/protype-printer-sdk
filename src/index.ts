@@ -18,6 +18,7 @@ export type {
   MoonrakerConfig,
   PrinterStatus,
   HeaterState,
+  HeaterLimits,
   TemperatureData,
   ToolheadState,
   Position,
@@ -26,6 +27,7 @@ export type {
   PrintState,
   KlipperState,
   FilamentSensorState,
+  FanState,
   GcodeFile,
   GcodeFileMetadata,
   PrintHistoryJob,
@@ -38,7 +40,8 @@ export type {
 } from './api/types';
 
 // ─── React Hooks ────────────────────────────────────
-export { MoonrakerProvider, useMoonraker } from './hooks/MoonrakerProvider';
+export { MoonrakerProvider, useMoonraker, usePrinterSelector } from './hooks/MoonrakerProvider';
+export type { MoonrakerValue } from './hooks/MoonrakerProvider';
 export { usePrinterState } from './hooks/usePrinterState';
 export { useTemperature } from './hooks/useTemperature';
 export { usePrintJob } from './hooks/usePrintJob';
@@ -55,7 +58,7 @@ export type { TemperatureValue, HeaterInfo } from './hooks/useTemperature';
 export type { PrintJobValue } from './hooks/usePrintJob';
 export type { GcodeValue, GcodeHistoryEntry } from './hooks/useGcode';
 export type { MotionValue, JogParams } from './hooks/useMotion';
-export type { FilesValue } from './hooks/useFiles';
+export type { FilesValue, UploadProgress } from './hooks/useFiles';
 export type { FilamentValue } from './hooks/useFilament';
 export type { MacrosValue } from './hooks/useMacros';
 export type { PrintHistoryValue, PrintHistoryStats } from './hooks/usePrintHistory';
@@ -74,6 +77,8 @@ export {
 } from './utils/format';
 
 export * as gcode from './utils/gcode-builder';
+
+export { createPoller } from './utils/poller';
 
 export {
   ENDPOINTS,
@@ -95,3 +100,7 @@ export {
 } from './routes';
 
 export type { PrinterTab } from './routes';
+
+// ─── Store ──────────────────────────────────────────
+export { createPrinterStore, type PrinterStore, type PrinterStoreState } from './store/printer-store';
+export { reconcileStatus } from './store/reconcile';

@@ -9,7 +9,7 @@
  *   <span>{extruder.temperature}°C / {extruder.target}°C</span>
  */
 import { useMemo, useCallback } from 'react';
-import { useMoonraker } from './MoonrakerProvider';
+import { useMoonraker, usePrinterSelector } from './MoonrakerProvider';
 import type { HeaterState } from '../api/types';
 
 export interface HeaterInfo extends HeaterState {
@@ -32,6 +32,10 @@ export interface TemperatureValue {
   dryingChamber1: HeaterInfo | null;
   /** Drying chamber 2 — null if not present */
   dryingChamber2: HeaterInfo | null;
+  /** Drying chamber 3 — null if not present */
+  dryingChamber3: HeaterInfo | null;
+  /** Drying chamber 4 — null if not present */
+  dryingChamber4: HeaterInfo | null;
   /** Bed glass temperature sensor — null if not present */
   bedGlass: HeaterInfo | null;
 
@@ -50,6 +54,10 @@ export interface TemperatureValue {
   setDryingChamber1Temp: (target: number) => Promise<void>;
   /** Set drying chamber 2 temperature */
   setDryingChamber2Temp: (target: number) => Promise<void>;
+  /** Set drying chamber 3 temperature */
+  setDryingChamber3Temp: (target: number) => Promise<void>;
+  /** Set drying chamber 4 temperature */
+  setDryingChamber4Temp: (target: number) => Promise<void>;
   /** Turn off all heaters */
   cooldown: () => Promise<void>;
   /** Preheat to PLA defaults (200/60) */
@@ -70,41 +78,54 @@ function toHeaterInfo(h: HeaterState | null | undefined): HeaterInfo | null {
 }
 
 export function useTemperature(): TemperatureValue {
-  const { status, client } = useMoonraker();
+  // Commands need the (stable) REST client; the reactive temperature data
+  // comes from a narrow store slice so unrelated status ticks don't re-run.
+  const { client } = useMoonraker();
+  const temperatures = usePrinterSelector((s) => s.status?.temperatures);
 
   const extruder = useMemo(
-    () => toHeaterInfo(status?.temperatures?.extruder),
-    [status?.temperatures?.extruder],
+    () => toHeaterInfo(temperatures?.extruder),
+    [temperatures?.extruder],
   );
 
   const extruder1 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.extruder1),
-    [status?.temperatures?.extruder1],
+    () => toHeaterInfo(temperatures?.extruder1),
+    [temperatures?.extruder1],
   );
 
   const bed = useMemo(
-    () => toHeaterInfo(status?.temperatures?.heaterBed),
-    [status?.temperatures?.heaterBed],
+    () => toHeaterInfo(temperatures?.heaterBed),
+    [temperatures?.heaterBed],
   );
 
   const chamber = useMemo(
-    () => toHeaterInfo(status?.temperatures?.heaterChamber),
-    [status?.temperatures?.heaterChamber],
+    () => toHeaterInfo(temperatures?.heaterChamber),
+    [temperatures?.heaterChamber],
   );
 
   const dryingChamber1 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.dryingChamber1),
-    [status?.temperatures?.dryingChamber1],
+    () => toHeaterInfo(temperatures?.dryingChamber1),
+    [temperatures?.dryingChamber1],
   );
 
   const dryingChamber2 = useMemo(
-    () => toHeaterInfo(status?.temperatures?.dryingChamber2),
-    [status?.temperatures?.dryingChamber2],
+    () => toHeaterInfo(temperatures?.dryingChamber2),
+    [temperatures?.dryingChamber2],
+  );
+
+  const dryingChamber3 = useMemo(
+    () => toHeaterInfo(temperatures?.dryingChamber3),
+    [temperatures?.dryingChamber3],
+  );
+
+  const dryingChamber4 = useMemo(
+    () => toHeaterInfo(temperatures?.dryingChamber4),
+    [temperatures?.dryingChamber4],
   );
 
   const bedGlass = useMemo(
-    () => toHeaterInfo(status?.temperatures?.bedGlass),
-    [status?.temperatures?.bedGlass],
+    () => toHeaterInfo(temperatures?.bedGlass),
+    [temperatures?.bedGlass],
   );
 
   const setExtruderTemp = useCallback(
@@ -157,6 +178,20 @@ export function useTemperature(): TemperatureValue {
     [client],
   );
 
+  const setDryingChamber3Temp = useCallback(
+    async (target: number) => {
+      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Drying_Chamber_3 TARGET=${target}`);
+    },
+    [client],
+  );
+
+  const setDryingChamber4Temp = useCallback(
+    async (target: number) => {
+      await client.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Drying_Chamber_4 TARGET=${target}`);
+    },
+    [client],
+  );
+
   const cooldown = useCallback(async () => {
     await client.sendGcode('TURN_OFF_HEATERS');
   }, [client]);
@@ -183,6 +218,8 @@ export function useTemperature(): TemperatureValue {
     chamber,
     dryingChamber1,
     dryingChamber2,
+    dryingChamber3,
+    dryingChamber4,
     bedGlass,
     setExtruderTemp,
     setExtruderTempWait,
@@ -191,6 +228,8 @@ export function useTemperature(): TemperatureValue {
     setChamberTemp,
     setDryingChamber1Temp,
     setDryingChamber2Temp,
+    setDryingChamber3Temp,
+    setDryingChamber4Temp,
     cooldown,
     preheatPLA,
     preheatABS,

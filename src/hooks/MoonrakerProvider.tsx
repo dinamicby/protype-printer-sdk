@@ -15,18 +15,45 @@ import {
   useContext,
   useEffect,
   useRef,
-  useState,
   useMemo,
   useCallback,
   type ReactNode,
 } from 'react';
+import { useStore } from 'zustand';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { MoonrakerClient } from '../api/moonraker-client';
 import { MoonrakerWebSocket, wsUrlFromHttp } from '../api/moonraker-ws';
 import type { ConnectionMode, PrinterStatus, MoonrakerConfig } from '../api/types';
+import { createPoller } from '../utils/poller';
+import {
+  createPrinterStore,
+  type PrinterStore,
+  type PrinterStoreState,
+} from '../store/printer-store';
 
 // ─── Context Shape ─────────────────────────────────────────
 
+/**
+ * Only stable references live in context — identity never changes between
+ * ticks. Reactive state (status / connection flags) lives in the zustand
+ * store and is read via `useStore(ctx.store)` so an unchanged tick (which
+ * `applyStatus` short-circuits) triggers no re-render.
+ */
 interface MoonrakerContextValue {
+  /** REST API client */
+  client: MoonrakerClient;
+  /** WebSocket client for real-time data */
+  ws: MoonrakerWebSocket;
+  /** Connection config */
+  config: MoonrakerConfig;
+  /** Force a status refresh */
+  refresh: () => Promise<void>;
+  /** Reactive printer store (status + connection flags) */
+  store: PrinterStore;
+}
+
+/** Public shape returned by {@link useMoonraker} — unchanged from before. */
+export interface MoonrakerValue {
   /** REST API client */
   client: MoonrakerClient;
   /** WebSocket client for real-time data */
@@ -68,11 +95,6 @@ export function MoonrakerProvider({
   pollInterval,
   disableWebSocket = false,
 }: MoonrakerProviderProps) {
-  const [status, setStatus] = useState<PrinterStatus | null>(null);
-  const [isConnected, setIsConnected] = useState(false);
-  const [wsConnected, setWsConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   // Stable config reference
   const config: MoonrakerConfig = useMemo(
     () => ({ baseUrl, mode, pollInterval }),
@@ -81,6 +103,9 @@ export function MoonrakerProvider({
 
   // REST client
   const client = useMemo(() => new MoonrakerClient(config), [config]);
+
+  // Reactive printer store — created once per provider instance.
+  const store = useMemo(() => createPrinterStore(), [client]);
 
   // WebSocket client
   const wsRef = useRef<MoonrakerWebSocket | null>(null);
@@ -104,28 +129,39 @@ export function MoonrakerProvider({
     try {
       const result = await client.getPrinterStatus();
       if (result.success && result.data) {
-        setStatus(result.data);
-        setIsConnected(true);
-        setError(null);
+        store.getState().applyStatus(result.data);
+        store.getState().setConnection({ isConnected: true, error: null });
       } else {
-        setIsConnected(false);
-        setError(result.error ?? 'Failed to fetch printer status');
+        store.getState().setConnection({
+          isConnected: false,
+          error: result.error ?? 'Failed to fetch printer status',
+        });
       }
     } catch (err: any) {
-      setIsConnected(false);
-      setError(err?.message ?? 'Connection error');
+      store.getState().setConnection({
+        isConnected: false,
+        error: err?.message ?? 'Connection error',
+      });
     }
-  }, [client]);
+  }, [client, store]);
 
-  // Poll on interval
+  // Poll on interval — createPoller guarantees no overlapping requests
+  // (a hung Moonraker used to stack timed-out requests every 2 s).
+  //
+  // Cadence is dynamic: while the WS is live, REST polling backs off to a
+  // 15 s heartbeat (a safety net against missed WS notifications); once the
+  // WS drops, it snaps back to client.pollInterval so the UI still updates
+  // promptly without a live push channel.
   useEffect(() => {
-    // Initial fetch
-    refresh();
-
-    const interval = client.pollInterval;
-    const timer = setInterval(refresh, interval);
-    return () => clearInterval(timer);
-  }, [refresh, client.pollInterval]);
+    const HEARTBEAT_MS = 15_000;
+    const poller = createPoller(refresh, client.pollInterval);
+    poller.start();
+    const unsub = store.subscribe(
+      (s) => s.wsConnected,
+      (wsConnected) => poller.setInterval(wsConnected ? HEARTBEAT_MS : client.pollInterval),
+    );
+    return () => { unsub(); poller.stop(); };
+  }, [refresh, client.pollInterval, store]);
 
   // ─── WebSocket ───────────────────────────────────────
 
@@ -134,7 +170,7 @@ export function MoonrakerProvider({
 
     // Listen for connection state
     const handleConnection = (data: any) => {
-      setWsConnected(data.connected === true);
+      store.getState().setConnection({ wsConnected: data.connected === true });
 
       // When WS connects, subscribe to printer objects
       if (data.connected) {
@@ -146,6 +182,8 @@ export function MoonrakerProvider({
         ws.subscribeObjects({
           print_stats: null,
           virtual_sdcard: null,
+          display_status: null,
+          gcode_move: null,
           toolhead: null,
           extruder: null,
           extruder1: null,
@@ -153,9 +191,12 @@ export function MoonrakerProvider({
           'heater_generic Active_Chamber': null,
           'heater_generic Drying_Chamber_1': null,
           'heater_generic Drying_Chamber_2': null,
+          'heater_generic Drying_Chamber_3': null,
+          'heater_generic Drying_Chamber_4': null,
           'temperature_sensor bed_glass': null,
           save_variables: null,
           exclude_object: null,
+          fan: null,
           ...fsSub,
         }).catch(() => {});
       }
@@ -165,10 +206,9 @@ export function MoonrakerProvider({
     const handleStatusUpdate = (data: any) => {
       if (!data) return;
       // Merge partial update into current status
-      setStatus((prev) => {
-        if (!prev) return prev;
-        return mergeStatusUpdate(prev, data);
-      });
+      const prev = store.getState().status;
+      if (!prev) return;
+      store.getState().applyStatus(mergeStatusUpdate(prev, data));
     };
 
     ws.on('connection', handleConnection);
@@ -181,22 +221,13 @@ export function MoonrakerProvider({
       ws.off('status_update', handleStatusUpdate);
       ws.disconnect();
     };
-  }, [ws, disableWebSocket]);
+  }, [ws, disableWebSocket, store]);
 
   // ─── Context Value ───────────────────────────────────
 
   const value = useMemo<MoonrakerContextValue>(
-    () => ({
-      client,
-      ws,
-      status,
-      isConnected,
-      wsConnected,
-      error,
-      refresh,
-      config,
-    }),
-    [client, ws, status, isConnected, wsConnected, error, refresh, config],
+    () => ({ client, ws, config, refresh, store }),
+    [client, ws, config, refresh, store],
   );
 
   return (
@@ -206,14 +237,57 @@ export function MoonrakerProvider({
   );
 }
 
-// ─── Hook ──────────────────────────────────────────────────
+// ─── Hooks ─────────────────────────────────────────────────
 
-export function useMoonraker(): MoonrakerContextValue {
+/**
+ * Prior public API — now assembled from the stable context plus a full
+ * store subscription. Because `applyStatus` reconciles and skips `set`
+ * when the tick is unchanged, an unchanged poll causes NO re-render of
+ * consumers of this hook.
+ */
+export function useMoonraker(): MoonrakerValue {
   const ctx = useContext(MoonrakerContext);
   if (!ctx) {
     throw new Error('useMoonraker must be used within <MoonrakerProvider>');
   }
-  return ctx;
+  const state = useStore(ctx.store);
+  return useMemo(
+    () => ({
+      client: ctx.client,
+      ws: ctx.ws,
+      config: ctx.config,
+      refresh: ctx.refresh,
+      status: state.status,
+      isConnected: state.isConnected,
+      wsConnected: state.wsConnected,
+      error: state.error,
+    }),
+    [ctx, state],
+  );
+}
+
+/**
+ * Narrow store subscription — for the refactored hot hooks and any consumer
+ * that only depends on a slice of printer state. Re-renders only when the
+ * selected slice changes (structural sharing keeps slice identity stable
+ * across unchanged ticks).
+ *
+ * zustand v5 removed the equality argument from `useStore`; the custom-
+ * equality path routes through `useStoreWithEqualityFn` from
+ * `zustand/traditional`.
+ */
+export function usePrinterSelector<T>(
+  selector: (s: PrinterStoreState) => T,
+  equalityFn?: (a: T, b: T) => boolean,
+): T {
+  const ctx = useContext(MoonrakerContext);
+  if (!ctx) {
+    throw new Error('usePrinterSelector must be used within <MoonrakerProvider>');
+  }
+  // `useStoreWithEqualityFn` defaults to `Object.is` when no equalityFn is
+  // given — identical to plain `useStore(store, selector)` — so a single
+  // unconditional call covers both paths without violating rules-of-hooks.
+  return useStoreWithEqualityFn(ctx.store, selector, equalityFn);
 }
 
 // ─── Status Merge Helper ───────────────────────────────────
@@ -224,7 +298,8 @@ export function mergeStatusUpdate(
 ): PrinterStatus {
   const next = { ...prev };
 
-  // print_stats
+  // print_stats — includes info.{total_layer,current_layer} when the slicer
+  // emits SET_PRINT_STATS_INFO (PrusaSlicer 2.7+, SuperSlicer, OrcaSlicer).
   if (update.print_stats) {
     const ps = update.print_stats;
     next.printStats = {
@@ -235,6 +310,12 @@ export function mergeStatusUpdate(
       ...(ps.print_duration !== undefined && { printDuration: ps.print_duration }),
       ...(ps.filament_used !== undefined && { filamentUsed: ps.filament_used }),
       ...(ps.message !== undefined && { message: ps.message }),
+      ...(ps.info !== undefined && {
+        info: {
+          totalLayer: ps.info.total_layer ?? prev.printStats.info?.totalLayer ?? null,
+          currentLayer: ps.info.current_layer ?? prev.printStats.info?.currentLayer ?? null,
+        },
+      }),
     };
     next.elapsedSeconds = next.printStats.printDuration;
   }
@@ -248,8 +329,33 @@ export function mergeStatusUpdate(
       ...(vsd.is_active !== undefined && { isActive: vsd.is_active }),
       ...(vsd.file_position !== undefined && { filePosition: vsd.file_position }),
     };
-    next.progress = next.virtualSdCard.progress;
   }
+
+  // display_status — slicer-emitted M73 progress / M117 message.
+  if (update.display_status) {
+    const ds = update.display_status;
+    next.displayStatus = {
+      ...(prev.displayStatus ?? { progress: 0, message: '' }),
+      ...(ds.progress !== undefined && { progress: ds.progress }),
+      ...(ds.message !== undefined && { message: ds.message }),
+    };
+  }
+
+  // gcode_move
+  if (update.gcode_move) {
+    const gm = update.gcode_move;
+    next.gcodeMove = {
+      ...(prev.gcodeMove ?? { speedFactor: 1, extrudeFactor: 1, speed: 0 }),
+      ...(gm.speed_factor !== undefined && { speedFactor: gm.speed_factor }),
+      ...(gm.extrude_factor !== undefined && { extrudeFactor: gm.extrude_factor }),
+      ...(gm.speed !== undefined && { speed: gm.speed }),
+    };
+  }
+
+  // Computed progress — slicer wins, vsd is fallback.
+  next.progress = (next.displayStatus?.progress ?? 0) > 0
+    ? next.displayStatus.progress
+    : (next.virtualSdCard?.progress ?? 0);
 
   // Temperatures
   if (update.extruder) {
@@ -288,10 +394,34 @@ export function mergeStatusUpdate(
       dryingChamber2: mergeHeater(prev.temperatures.dryingChamber2, update['heater_generic Drying_Chamber_2']),
     };
   }
+  if (update['heater_generic Drying_Chamber_3']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      dryingChamber3: mergeHeater(prev.temperatures.dryingChamber3, update['heater_generic Drying_Chamber_3']),
+    };
+  }
+  if (update['heater_generic Drying_Chamber_4']) {
+    next.temperatures = {
+      ...prev.temperatures,
+      dryingChamber4: mergeHeater(prev.temperatures.dryingChamber4, update['heater_generic Drying_Chamber_4']),
+    };
+  }
   if (update['temperature_sensor bed_glass']) {
     next.temperatures = {
       ...prev.temperatures,
       bedGlass: mergeHeater(prev.temperatures.bedGlass, update['temperature_sensor bed_glass']),
+    };
+  }
+
+  // Part cooling fan
+  if (update.fan) {
+    const f = update.fan;
+    const prevFan = prev.fan ?? { speed: 0, rpm: null };
+    next.fan = {
+      speed: f.speed !== undefined ? Number(f.speed) : prevFan.speed,
+      rpm: f.rpm !== undefined
+        ? (f.rpm === null ? null : Number(f.rpm))
+        : prevFan.rpm,
     };
   }
 
