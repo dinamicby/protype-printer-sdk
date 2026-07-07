@@ -7,9 +7,18 @@
  * On iOS, requests to CGNAT VPN addresses (100.64.x.x) are routed through
  * NativeHTTPModule which uses Network.framework NWConnection to bypass ATS,
  * since NSAllowsArbitraryLoads does not exempt NSURLSession on iOS 26+.
+ *
+ * react-native / react-native-fs are optional peer deps used only on the RN
+ * iOS code path below — they're resolved lazily via requireOptional() so
+ * non-RN consumers (browser, Node, Vite-bundled web apps) can import this
+ * module without those packages installed. A static top-level `import`
+ * (type-only or otherwise) would make bundlers/tsc that can't resolve them
+ * fail the entire module graph even though the RN branch is never reached
+ * outside actual RN/iOS. The shapes below are minimal local structural
+ * types covering only what this file touches — not the real packages'
+ * declarations — so typechecking never depends on those deps being
+ * installed either.
  */
-import { NativeModules, Platform } from 'react-native';
-import RNFS from 'react-native-fs';
 import type {
   MoonrakerConfig,
   ApiResult,
@@ -28,6 +37,41 @@ import type {
   Thumbnail,
   TemperatureData,
 } from './types';
+
+/** Best-effort require of an optional native dependency; undefined if absent. */
+function requireOptional<T>(id: string): T | undefined {
+  try {
+    // Indirect require (not a static `import`) keeps bundlers like Vite/webpack
+    // from resolving the specifier at build time, so non-RN consumers don't
+    // fail to build just because these optional native deps aren't installed.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return (typeof require === 'function' ? require(id) : undefined) as T | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface NativeHTTPModuleShape {
+  request(url: string, method: string, headers: Record<string, string>, body: string | null):
+    Promise<{ status: number; body: string }>;
+  uploadFile(
+    requestId: string, url: string, fileUri: string, fileName: string,
+    fields: Record<string, string>,
+  ): Promise<{ status: number; body: string }>;
+  fetchBase64(url: string): Promise<string>;
+}
+interface NativeModulesShape { NativeHTTPModule?: NativeHTTPModuleShape }
+interface PlatformShape { OS: string }
+interface RNFSShape {
+  CachesDirectoryPath: string;
+  writeFile(path: string, content: string, encoding: string): Promise<void>;
+  unlink(path: string): Promise<void>;
+}
+
+const reactNative = requireOptional<{ NativeModules: NativeModulesShape; Platform: PlatformShape }>('react-native');
+const NativeModules = reactNative?.NativeModules;
+const Platform = reactNative?.Platform;
+const RNFS = requireOptional<{ default: RNFSShape }>('react-native-fs')?.default;
 
 // ─── Default Config ────────────────────────────────────────
 
@@ -111,8 +155,8 @@ export class MoonrakerClient {
    * Applies to CGNAT VPN addresses (100.64.0.0/10) on iOS.
    */
   private shouldUseNativeHTTP(url: string): boolean {
-    if (Platform.OS !== 'ios') return false;
-    if (!NativeModules.NativeHTTPModule) return false;
+    if (Platform?.OS !== 'ios') return false;
+    if (!NativeModules?.NativeHTTPModule) return false;
     try {
       const host = new URL(url).hostname;
       // 100.64.0.0/10 — first octet 100, second octet 64–127
@@ -121,6 +165,16 @@ export class MoonrakerClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * NativeHTTPModule, asserted present. Only call from branches already
+   * guarded by shouldUseNativeHTTP() — TS can't narrow across that method
+   * boundary, so this centralizes the one non-null assertion instead of
+   * repeating it at every call site.
+   */
+  private get nativeHTTP(): NativeHTTPModuleShape {
+    return NativeModules!.NativeHTTPModule!;
   }
 
   private async nativeRequest<T>(
@@ -136,7 +190,7 @@ export class MoonrakerClient {
 
     try {
       const result: { status: number; body: string } =
-        await NativeModules.NativeHTTPModule.request(url, method, headers, body);
+        await this.nativeHTTP.request(url, method, headers, body);
 
       if (result.status >= 400) {
         return { success: false, error: httpErrorMessage(result.status, result.body) };
@@ -784,7 +838,7 @@ export class MoonrakerClient {
         opts.requestId ?? `up-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
       try {
         const result: { status: number; body: string } =
-          await NativeModules.NativeHTTPModule.uploadFile(
+          await this.nativeHTTP.uploadFile(
             requestId,
             url,
             file.uri,
@@ -832,7 +886,7 @@ export class MoonrakerClient {
     const url = this.getThumbnailUrl(relativePath);
     if (this.shouldUseNativeHTTP(url)) {
       try {
-        const dataUri: string = await NativeModules.NativeHTTPModule.fetchBase64(url);
+        const dataUri: string = await this.nativeHTTP.fetchBase64(url);
         return dataUri;
       } catch {
         return null;
@@ -890,7 +944,7 @@ export class MoonrakerClient {
       if (this.shouldUseNativeHTTP(url)) {
         // Use NativeHTTPModule directly — config files are plain text, not JSON
         const result: { status: number; body: string } =
-          await NativeModules.NativeHTTPModule.request(url, 'GET', {}, null);
+          await this.nativeHTTP.request(url, 'GET', {}, null);
         if (result.status >= 400) return { success: false, error: `HTTP ${result.status}` };
         return { success: true, data: result.body ?? '' };
       }
@@ -915,10 +969,14 @@ export class MoonrakerClient {
    * routes CGNAT printers through NativeHTTPModule (ATS blocks plain fetch).
    */
   async saveConfigFile(filename: string, content: string): Promise<ApiResult<void>> {
+    // RN-only: relies on RNFS for a temp file, same as before this file gained
+    // an optional-dependency guard. Non-RN callers were never able to reach
+    // this successfully (RNFS was always required here); that is unchanged.
+    const rnfs = RNFS!;
     const safe = filename.replace(/[^\w.-]/g, '_');
-    const tmpPath = `${RNFS.CachesDirectoryPath}/cfg-upload-${Date.now()}-${safe}`;
+    const tmpPath = `${rnfs.CachesDirectoryPath}/cfg-upload-${Date.now()}-${safe}`;
     try {
-      await RNFS.writeFile(tmpPath, content, 'utf8');
+      await rnfs.writeFile(tmpPath, content, 'utf8');
       return await this.uploadGcodeFile(
         { uri: `file://${tmpPath}`, name: filename },
         { root: 'config' },
@@ -926,7 +984,7 @@ export class MoonrakerClient {
     } catch (err: any) {
       return { success: false, error: err?.message ?? 'Failed to save file' };
     } finally {
-      RNFS.unlink(tmpPath).catch(() => {});
+      rnfs.unlink(tmpPath).catch(() => {});
     }
   }
 
