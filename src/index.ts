@@ -37,6 +37,7 @@ export type {
   ApiResult,
   MoonrakerEvent,
   MoonrakerEventType,
+  BedMeshData,
 } from './api/types';
 
 // ─── React Hooks ────────────────────────────────────

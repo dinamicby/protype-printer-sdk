@@ -47,6 +47,22 @@ export interface MoonrakerWsConfig {
   rpcTimeout?: number;
 }
 
+/** Maximum reconnect backoff (ms). */
+const MAX_RECONNECT_DELAY_MS = 30000;
+
+/**
+ * Exponential reconnect backoff capped at {@link MAX_RECONNECT_DELAY_MS}.
+ * Pure (no jitter) so it is deterministically unit-testable; the caller adds
+ * jitter. Replaces the old `delay * min(count+1, 5)` curve that capped at ~10s
+ * and hammered an offline printer forever (C1).
+ */
+export function computeReconnectDelay(
+  attempt: number,
+  baseDelay: number,
+): number {
+  return Math.min(baseDelay * Math.pow(2, attempt), MAX_RECONNECT_DELAY_MS);
+}
+
 // ─── Client ────────────────────────────────────────────────
 
 export class MoonrakerWebSocket {
@@ -141,11 +157,23 @@ export class MoonrakerWebSocket {
   private scheduleReconnect(): void {
     if (!this.config.autoReconnect) return;
     if (this.reconnectCount >= this.config.maxReconnects) return;
+    // Don't stack timers: if a reconnect is already pending, leave it.
+    if (this.reconnectTimer) return;
+
+    // Exponential backoff capped at 30s + up to 30% jitter, so a permanently
+    // offline printer (and many open printer screens at once) backs off
+    // gracefully instead of reopening a socket every 10s forever.
+    const base = computeReconnectDelay(
+      this.reconnectCount,
+      this.config.reconnectDelay,
+    );
+    const delay = base + base * 0.3 * Math.random();
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.reconnectCount++;
       this.connect();
-    }, this.config.reconnectDelay * Math.min(this.reconnectCount + 1, 5));
+    }, delay);
   }
 
   // ─── JSON-RPC Calls ────────────────────────────────────
@@ -263,7 +291,6 @@ export class MoonrakerWebSocket {
 /** Helper to derive WebSocket URL from HTTP base URL */
 export function wsUrlFromHttp(httpUrl: string): string {
   const url = new URL(httpUrl);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/websocket';
-  return url.toString();
+  const wsProto = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProto}//${url.host}/websocket`;
 }

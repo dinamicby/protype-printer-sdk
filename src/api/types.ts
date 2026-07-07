@@ -80,6 +80,10 @@ export interface ToolheadState {
   printTime: number;
   estimatedPrintTime: number;
   activeExtruder: string;
+  /** Per-axis minimum positions reported by Klipper (x, y, z). null if unknown. */
+  axisMinimum: { x: number; y: number; z: number } | null;
+  /** Per-axis maximum positions reported by Klipper (x, y, z). null if unknown. */
+  axisMaximum: { x: number; y: number; z: number } | null;
 }
 
 // ─── Print Stats ───────────────────────────────────────────
@@ -142,6 +146,17 @@ export interface FilamentSensorState {
   filamentDetected: boolean;
 }
 
+// ─── Bed Mesh ──────────────────────────────────────────────
+
+export interface BedMeshData {
+  profileName: string;
+  meshMin: [number, number];
+  meshMax: [number, number];
+  probedMatrix: number[][];
+  meshMatrix: number[][];
+  profiles: Record<string, any>;
+}
+
 // ─── Combined Printer Status ───────────────────────────────
 
 export interface PrinterStatus {
@@ -154,6 +169,9 @@ export interface PrinterStatus {
   gcodeMove: GcodeMove;
   fan: FanState | null;
   filamentSensors: FilamentSensorState[];
+  /** Klipper [save_variables] persisted variables (loaded_N, preloaded_N, need_to_*, *_remaining, …) */
+  saveVariables: Record<string, number | string | boolean>;
+  bedMesh: BedMeshData | null;
   /** Computed fields */
   progress: number;
   eta: Date | null;
