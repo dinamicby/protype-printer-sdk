@@ -32,10 +32,16 @@ const DEFAULTS = {
 
 // ─── Client ────────────────────────────────────────────────
 
+export interface GcodeSendEvent {
+  script: string;
+  completion: Promise<ApiResult<void>>;
+}
+
 export class MoonrakerClient {
   private baseUrl: string;
   private timeout: number;
   private maxRetries: number;
+  private gcodeObservers = new Set<(ev: GcodeSendEvent) => void>();
 
   constructor(private config: MoonrakerConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
@@ -359,8 +365,22 @@ export class MoonrakerClient {
 
   // ─── G-code ────────────────────────────────────────────
 
+  /**
+   * Additive observer for outgoing G-code sends (queue UIs etc.). Observers are
+   * notified synchronously with the script and the completion promise; observer
+   * exceptions are swallowed so they can never affect the send itself.
+   */
+  onGcodeSent(cb: (ev: GcodeSendEvent) => void): () => void {
+    this.gcodeObservers.add(cb);
+    return () => this.gcodeObservers.delete(cb);
+  }
+
   async sendGcode(script: string): Promise<ApiResult<void>> {
-    return this.post('/printer/gcode/script', { script });
+    const completion = this.post<void>('/printer/gcode/script', { script });
+    for (const cb of this.gcodeObservers) {
+      try { cb({ script, completion }); } catch { /* observer bugs must not break sends */ }
+    }
+    return completion;
   }
 
   // ─── Motion ────────────────────────────────────────────
