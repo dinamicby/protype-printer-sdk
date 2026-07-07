@@ -10,6 +10,7 @@
 
 // ─── API Layer ──────────────────────────────────────
 export { MoonrakerClient } from './api/moonraker-client';
+export type { GcodeSendEvent } from './api/moonraker-client';
 export { MoonrakerWebSocket, wsUrlFromHttp } from './api/moonraker-ws';
 
 // ─── Types ──────────────────────────────────────────
