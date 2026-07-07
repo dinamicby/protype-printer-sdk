@@ -1,3 +1,4 @@
+import {describe, test, expect} from 'vitest';
 import {parseSaveVariables} from '../moonraker-client';
 
 describe('parseSaveVariables', () => {

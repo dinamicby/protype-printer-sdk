@@ -1,3 +1,4 @@
+import {describe, test, expect} from 'vitest';
 import {httpErrorMessage} from '../moonraker-client';
 
 describe('httpErrorMessage', () => {

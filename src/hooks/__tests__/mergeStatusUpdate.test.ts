@@ -1,3 +1,4 @@
+import {describe, test, expect} from 'vitest';
 import {mergeStatusUpdate} from '../MoonrakerProvider';
 import type {PrinterStatus} from '../../api/types';
 
@@ -5,9 +6,12 @@ function baseStatus(): PrinterStatus {
   return {
     klipperState: 'ready',
     printStats: {state: 'standby', filename: '', totalDuration: 0, printDuration: 0, filamentUsed: 0, message: '', info: {totalLayer: null, currentLayer: null}},
-    temperatures: {extruder: null, extruder1: null, heaterBed: null, heaterChamber: null, dryingChamber1: null, dryingChamber2: null, bedGlass: null},
+    temperatures: {extruder: null, extruder1: null, heaterBed: null, heaterChamber: null, dryingChamber1: null, dryingChamber2: null, dryingChamber3: null, dryingChamber4: null, bedGlass: null},
     toolhead: {position: {x: 0, y: 0, z: 0, e: 0}, homed: [false, false, false], maxVelocity: 0, maxAccel: 0, printTime: 0, estimatedPrintTime: 0, activeExtruder: 'extruder', axisMinimum: null, axisMaximum: null},
     virtualSdCard: {filePath: '', progress: 0, isActive: false, filePosition: 0, fileSize: 0},
+    displayStatus: {progress: 0, message: ''},
+    gcodeMove: {speedFactor: 1, extrudeFactor: 1, speed: 0},
+    fan: null,
     filamentSensors: [{name: 'FS9', enabled: true, filamentDetected: false}],
     saveVariables: {loaded_1: 0},
     bedMesh: null,
@@ -15,7 +19,7 @@ function baseStatus(): PrinterStatus {
     eta: null,
     elapsedSeconds: 0,
     isConnected: true,
-  } as PrinterStatus;
+  };
 }
 
 describe('mergeStatusUpdate filament + save_variables', () => {
