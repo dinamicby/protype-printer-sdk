@@ -662,12 +662,14 @@ export class MoonrakerClient {
     z?: number;
     speed?: number;
   }): Promise<ApiResult<void>> {
+    const parts = ['G90']; // force absolute mode — иначе ход применится как дельта в G91
     const move = ['G1'];
     if (params.x !== undefined) move.push(`X${params.x}`);
     if (params.y !== undefined) move.push(`Y${params.y}`);
     if (params.z !== undefined) move.push(`Z${params.z}`);
     if (params.speed !== undefined) move.push(`F${params.speed}`);
-    return this.sendGcode(move.join(' '));
+    parts.push(move.join(' '));
+    return this.sendGcode(parts.join('\n'));
   }
 
   async emergencyStop(): Promise<ApiResult<void>> {
