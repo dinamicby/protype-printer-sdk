@@ -276,6 +276,14 @@ export class MoonrakerWebSocket {
       if (eventName === 'notify_status_update' && Array.isArray(params)) {
         this.emit('status_update', params[0]);
       }
+      // Moonraker sends console output as notify_gcode_response with params
+      // [text]. Consumers (useGcode's console, PID capture) subscribe to the
+      // friendly 'gcode_response' event with the string payload — alias it
+      // here, mirroring status_update. Without this the live G-code response
+      // stream is dead app-wide (empty console, PID auto-capture never fires).
+      if (eventName === 'notify_gcode_response' && Array.isArray(params)) {
+        this.emit('gcode_response', params[0]);
+      }
     }
   }
 

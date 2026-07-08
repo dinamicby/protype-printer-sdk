@@ -29,3 +29,16 @@ test('reconnect with stale subscriptions does not emit unhandledrejection', asyn
   vi.unstubAllGlobals();
   expect(unhandled).not.toHaveBeenCalled(); // сегодня: FAIL
 });
+
+test('notify_gcode_response is aliased to gcode_response with the string payload', () => {
+  const ws = new MoonrakerWebSocket({ url: 'ws://x/websocket', autoReconnect: false });
+  const handler = vi.fn();
+  ws.on('gcode_response', handler);
+  // Moonraker frame: params is [text]. Consumers listen for 'gcode_response'.
+  (ws as any).handleMessage({
+    jsonrpc: '2.0',
+    method: 'notify_gcode_response',
+    params: ['// echo: probe ok'],
+  });
+  expect(handler).toHaveBeenCalledWith('// echo: probe ok');
+});
