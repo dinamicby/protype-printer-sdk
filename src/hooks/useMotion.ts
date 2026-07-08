@@ -13,6 +13,15 @@ import { useMemo, useCallback } from 'react';
 import { useMoonraker } from './MoonrakerProvider';
 import type { Position } from '../api/types';
 
+/**
+ * Pure `isHomed` computation, extracted for direct unit testing.
+ * `homed` is the `[x, y, z]` boolean tuple written by the status parser
+ * (see `moonraker-client.ts`); all three must be true.
+ */
+export function computeIsHomed(homed: readonly boolean[] | undefined): boolean {
+  return (homed?.length ?? 0) === 3 && (homed as boolean[]).every(Boolean);
+}
+
 export interface MotionValue {
   /** Current toolhead position */
   position: Position;
@@ -65,12 +74,10 @@ export function useMotion(): MotionValue {
     [status?.toolhead?.position],
   );
 
-  const isHomed = useMemo(() => {
-    if (!status?.toolhead) return false;
-    // Klipper reports homed_axes as string like "xyz"
-    const homed = (status.toolhead as any).homedAxes ?? '';
-    return homed.includes('x') && homed.includes('y') && homed.includes('z');
-  }, [status?.toolhead]);
+  const isHomed = useMemo(
+    () => computeIsHomed(status?.toolhead?.homed),
+    [status?.toolhead?.homed],
+  );
 
   const jog = useCallback(
     async (params: JogParams) => {

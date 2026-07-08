@@ -9,7 +9,7 @@
  */
 import { useMemo, useCallback } from 'react';
 import { useMoonraker, usePrinterSelector } from './MoonrakerProvider';
-import type { PrintState } from '../api/types';
+import type { ApiResult, PrintState } from '../api/types';
 
 export interface PrintJobValue {
   /** Current print state */
@@ -38,12 +38,16 @@ export interface PrintJobValue {
   // ─── Controls ─────────────────────────────────────
   /** Start a print by filename */
   startPrint: (filename: string) => Promise<void>;
-  /** Pause current print */
-  pause: () => Promise<void>;
-  /** Resume paused print */
-  resume: () => Promise<void>;
-  /** Cancel current print */
-  cancel: () => Promise<void>;
+  /**
+   * Pause current print. Resolves with the underlying `ApiResult` — check
+   * `.success` to detect a failed pause (the client never rejects, so this
+   * is the only way to know an abort command didn't reach Klipper).
+   */
+  pause: () => Promise<ApiResult<void>>;
+  /** Resume paused print. See `pause` for the failure-surfacing contract. */
+  resume: () => Promise<ApiResult<void>>;
+  /** Cancel current print. See `pause` for the failure-surfacing contract. */
+  cancel: () => Promise<ApiResult<void>>;
 }
 
 export function usePrintJob(): PrintJobValue {
@@ -85,15 +89,15 @@ export function usePrintJob(): PrintJobValue {
   );
 
   const pause = useCallback(async () => {
-    await client.pausePrint();
+    return client.pausePrint();
   }, [client]);
 
   const resume = useCallback(async () => {
-    await client.resumePrint();
+    return client.resumePrint();
   }, [client]);
 
   const cancel = useCallback(async () => {
-    await client.cancelPrint();
+    return client.cancelPrint();
   }, [client]);
 
   return {
