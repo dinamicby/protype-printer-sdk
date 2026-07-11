@@ -5,8 +5,12 @@
  * child components via context. Handles connection lifecycle, auto-reconnect,
  * and status polling.
  *
- * Usage:
- *   <MoonrakerProvider baseUrl="http://192.168.1.2:7125" mode="remote">
+ * Usage (point baseUrl at the ProControl proxy, and pass getAuthToken so every
+ * request/upgrade carries the Bearer JWT it requires):
+ *   <MoonrakerProvider
+ *     baseUrl="http://192.168.1.2:7200"
+ *     mode="remote"
+ *     getAuthToken={() => currentAccessToken}>
  *     <PrinterDashboard />
  *   </MoonrakerProvider>
  */
@@ -84,6 +88,14 @@ interface MoonrakerProviderProps {
   pollInterval?: number;
   /** Disable WebSocket (use polling only) */
   disableWebSocket?: boolean;
+  /**
+   * Resolves the current bearer token for the ProControl proxy. Should be a
+   * stable reference (e.g. a ref reader) so identity doesn't change on token
+   * refresh — otherwise the client/WS would be recreated each refresh.
+   */
+  getAuthToken?: () => string | null | undefined;
+  /** Called when a printer request is rejected with 401 (token likely expired). */
+  onAuthError?: () => void;
 }
 
 // ─── Provider Component ────────────────────────────────────
@@ -94,11 +106,33 @@ export function MoonrakerProvider({
   mode = 'remote',
   pollInterval,
   disableWebSocket = false,
+  getAuthToken,
+  onAuthError,
 }: MoonrakerProviderProps) {
+  // Keep the auth callbacks in refs so the client/WS aren't recreated when the
+  // parent passes a fresh function identity (e.g. on token refresh). The client
+  // reads the token fresh per request via these stable wrappers.
+  const getAuthTokenRef = useRef(getAuthToken);
+  getAuthTokenRef.current = getAuthToken;
+  const onAuthErrorRef = useRef(onAuthError);
+  onAuthErrorRef.current = onAuthError;
+
+  const stableGetAuthToken = useCallback(
+    () => getAuthTokenRef.current?.(),
+    [],
+  );
+  const stableOnAuthError = useCallback(() => onAuthErrorRef.current?.(), []);
+
   // Stable config reference
   const config: MoonrakerConfig = useMemo(
-    () => ({ baseUrl, mode, pollInterval }),
-    [baseUrl, mode, pollInterval],
+    () => ({
+      baseUrl,
+      mode,
+      pollInterval,
+      getAuthToken: stableGetAuthToken,
+      onAuthError: stableOnAuthError,
+    }),
+    [baseUrl, mode, pollInterval, stableGetAuthToken, stableOnAuthError],
   );
 
   // REST client
@@ -115,8 +149,9 @@ export function MoonrakerProvider({
       url: wsUrl,
       autoReconnect: true,
       reconnectDelay: mode === 'local' ? 1000 : 3000,
+      getAuthToken: stableGetAuthToken,
     });
-  }, [baseUrl, mode]);
+  }, [baseUrl, mode, stableGetAuthToken]);
 
   // Keep ref in sync
   useEffect(() => {

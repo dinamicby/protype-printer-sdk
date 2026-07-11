@@ -7,6 +7,7 @@
  * - Server pushes events: gcode responses, klippy state changes, etc.
  */
 import type { MoonrakerEventType } from './types';
+import { bearerHeader, type AuthTokenProvider } from '../utils/auth';
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ interface PendingRequest {
 }
 
 export interface MoonrakerWsConfig {
-  /** WebSocket URL, e.g. "ws://192.168.1.2:7125/websocket" */
+  /** WebSocket URL, e.g. "ws://192.168.1.2:7200/websocket" (ProControl proxy) */
   url: string;
   /** Auto-reconnect on disconnect. Default: true */
   autoReconnect?: boolean;
@@ -45,6 +46,14 @@ export interface MoonrakerWsConfig {
   maxReconnects?: number;
   /** RPC call timeout in ms. Default: 10000 */
   rpcTimeout?: number;
+  /**
+   * Resolves the current bearer token, sent as an `Authorization: Bearer`
+   * header on the WebSocket upgrade so the ProControl proxy authorizes the
+   * connection. Read fresh on every (re)connect so a refreshed token is used
+   * automatically. React Native's WebSocket supports per-connection headers;
+   * on platforms that don't (browsers), the header is silently ignored.
+   */
+  getAuthToken?: AuthTokenProvider;
 }
 
 /** Maximum reconnect backoff (ms). */
@@ -82,6 +91,7 @@ export class MoonrakerWebSocket {
       reconnectDelay: 2000,
       maxReconnects: Infinity,
       rpcTimeout: 10000,
+      getAuthToken: () => undefined,
       ...config,
     };
   }
@@ -96,7 +106,18 @@ export class MoonrakerWebSocket {
     if (this.ws) this.disconnect();
 
     try {
-      this.ws = new WebSocket(this.config.url);
+      // Read the token fresh on every (re)connect so a token refreshed since
+      // the last connection is used. React Native's WebSocket accepts a
+      // headers option as the 3rd arg; the ProControl proxy requires the
+      // Bearer header on the upgrade request for remote (VPN) clients.
+      const headers = bearerHeader(this.config.getAuthToken());
+      this.ws =
+        Object.keys(headers).length > 0
+          ? // React Native's WebSocket takes a 3rd `{ headers }` options arg
+            // that the DOM lib's constructor type doesn't model.
+            // @ts-expect-error RN WebSocket accepts a headers option
+            new WebSocket(this.config.url, undefined, {headers})
+          : new WebSocket(this.config.url);
     } catch {
       this.scheduleReconnect();
       return;

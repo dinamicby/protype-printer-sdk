@@ -8,7 +8,7 @@
 export type ConnectionMode = 'local' | 'remote';
 
 export interface MoonrakerConfig {
-  /** Base URL of Moonraker API, e.g. "http://192.168.1.2:7125" */
+  /** Base URL of Moonraker API, e.g. "http://192.168.1.2:7200" (ProControl proxy) */
   baseUrl: string;
   /** local = short polling, fast timeouts. remote = longer intervals, VPN-aware. */
   mode: ConnectionMode;
@@ -18,6 +18,19 @@ export interface MoonrakerConfig {
   timeout?: number;
   /** Maximum retry attempts for failed requests. Default: 3. */
   maxRetries?: number;
+  /**
+   * Returns the current bearer token for the ProControl proxy, or null when
+   * unauthenticated. Called per request so a refreshed token is picked up
+   * without recreating the client. When omitted, no Authorization header is
+   * sent (e.g. talking to a bare Moonraker on a trusted LAN).
+   */
+  getAuthToken?: () => string | null | undefined;
+  /**
+   * Invoked when a printer request is rejected with HTTP 401 (token likely
+   * expired). The host app can use this to trigger a token refresh; the next
+   * poll/request then picks up the fresh token via {@link getAuthToken}.
+   */
+  onAuthError?: () => void;
 }
 
 // ─── Klipper Printer State ─────────────────────────────────

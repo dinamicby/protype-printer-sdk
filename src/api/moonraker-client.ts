@@ -19,6 +19,7 @@
  * declarations — so typechecking never depends on those deps being
  * installed either.
  */
+import { bearerHeader } from '../utils/auth';
 import type {
   MoonrakerConfig,
   ApiResult,
@@ -56,9 +57,9 @@ interface NativeHTTPModuleShape {
     Promise<{ status: number; body: string }>;
   uploadFile(
     requestId: string, url: string, fileUri: string, fileName: string,
-    fields: Record<string, string>,
+    fields: Record<string, string>, headers: Record<string, string>,
   ): Promise<{ status: number; body: string }>;
-  fetchBase64(url: string): Promise<string>;
+  fetchBase64(url: string, headers: Record<string, string>): Promise<string>;
 }
 interface NativeModulesShape { NativeHTTPModule?: NativeHTTPModuleShape }
 interface PlatformShape { OS: string }
@@ -116,6 +117,20 @@ export function httpErrorMessage(status: number, body?: string, statusText?: str
   return detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
 }
 
+/**
+ * Read a Blob as a `data:` URI via FileReader (available in React Native).
+ * Used to turn an authenticated thumbnail fetch into something `<Image>` can
+ * render without needing to attach an Authorization header itself.
+ */
+function blobToDataUri(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.readAsDataURL(blob);
+  });
+}
+
 export class MoonrakerClient {
   private baseUrl: string;
   private timeout: number;
@@ -148,6 +163,35 @@ export class MoonrakerClient {
   }
 
   // ─── Low-level HTTP ────────────────────────────────────
+
+  /**
+   * Authorization header for the ProControl proxy, read fresh per request so a
+   * refreshed token is used without recreating the client. Empty when there is
+   * no token (bare Moonraker on a trusted LAN).
+   */
+  private authHeader(): Record<string, string> {
+    return bearerHeader(this.config.getAuthToken?.());
+  }
+
+  /**
+   * Public accessor for the current Authorization header(s). For callers that
+   * must bypass the client's own request path — e.g. a direct NativeHTTPModule
+   * download or RNFS.downloadFile for streamed progress — so they can still
+   * authorize against the ProControl proxy.
+   */
+  getAuthHeaders(): Record<string, string> {
+    return this.authHeader();
+  }
+
+  /**
+   * Notify the host app that a request was rejected with 401 so it can refresh
+   * the token. The next poll/request then carries the fresh token.
+   */
+  private notifyIfUnauthorized(status: number): void {
+    if (status === 401) {
+      this.config.onAuthError?.();
+    }
+  }
 
   /**
    * Returns true when requests to this URL should use NativeHTTPModule
@@ -185,6 +229,7 @@ export class MoonrakerClient {
     const body = options.body != null ? String(options.body) : null;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...this.authHeader(),
       ...(options.headers as Record<string, string> ?? {}),
     };
 
@@ -193,6 +238,7 @@ export class MoonrakerClient {
         await this.nativeHTTP.request(url, method, headers, body);
 
       if (result.status >= 400) {
+        this.notifyIfUnauthorized(result.status);
         return { success: false, error: httpErrorMessage(result.status, result.body) };
       }
 
@@ -235,6 +281,7 @@ export class MoonrakerClient {
           signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
+            ...this.authHeader(),
             ...options.headers,
           },
         });
@@ -246,6 +293,7 @@ export class MoonrakerClient {
           lastError = httpErrorMessage(resp.status, errBody, resp.statusText);
           // Don't retry on 4xx client errors
           if (resp.status >= 400 && resp.status < 500) {
+            this.notifyIfUnauthorized(resp.status);
             return { success: false, error: lastError };
           }
           continue;
@@ -788,6 +836,11 @@ export class MoonrakerClient {
 
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `${this.baseUrl}/server/files/upload`);
+      // Authorize the upload through the ProControl proxy. Content-Type is left
+      // to the browser/RN so the multipart boundary is set automatically.
+      for (const [k, v] of Object.entries(this.authHeader())) {
+        xhr.setRequestHeader(k, v);
+      }
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
@@ -846,8 +899,10 @@ export class MoonrakerClient {
             file.uri,
             file.name,
             fields,
+            this.authHeader(),
           );
         if (result.status >= 400) {
+          this.notifyIfUnauthorized(result.status);
           return { success: false, error: `HTTP ${result.status}` };
         }
         return { success: true };
@@ -867,8 +922,15 @@ export class MoonrakerClient {
     );
 
     try {
-      const resp = await fetch(url, { method: 'POST', body: formData });
-      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+      const resp = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: this.authHeader(),
+      });
+      if (!resp.ok) {
+        this.notifyIfUnauthorized(resp.status);
+        return { success: false, error: `HTTP ${resp.status}` };
+      }
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message ?? 'Upload failed' };
@@ -888,14 +950,31 @@ export class MoonrakerClient {
     const url = this.getThumbnailUrl(relativePath);
     if (this.shouldUseNativeHTTP(url)) {
       try {
-        const dataUri: string = await this.nativeHTTP.fetchBase64(url);
+        const dataUri: string = await this.nativeHTTP.fetchBase64(url, this.authHeader());
         return dataUri;
       } catch {
         return null;
       }
     }
-    // Non-iOS or non-CGNAT: return regular URL (Image can fetch it)
-    return url;
+    // Non-iOS or non-CGNAT (Android / iOS-LAN): fetch the image with auth and
+    // return a data: URI, since <Image> can't attach the Bearer header itself
+    // and the ProControl proxy rejects unauthenticated requests.
+    const token = this.config.getAuthToken?.();
+    if (!token) {
+      // No auth configured — bare Moonraker; the plain URL works in <Image>.
+      return url;
+    }
+    try {
+      const resp = await fetch(url, { headers: this.authHeader() });
+      if (!resp.ok) {
+        this.notifyIfUnauthorized(resp.status);
+        return null;
+      }
+      const blob = await resp.blob();
+      return await blobToDataUri(blob);
+    } catch {
+      return null;
+    }
   }
 
   // ─── Print History ─────────────────────────────────────
@@ -946,15 +1025,21 @@ export class MoonrakerClient {
       if (this.shouldUseNativeHTTP(url)) {
         // Use NativeHTTPModule directly — config files are plain text, not JSON
         const result: { status: number; body: string } =
-          await this.nativeHTTP.request(url, 'GET', {}, null);
-        if (result.status >= 400) return { success: false, error: `HTTP ${result.status}` };
+          await this.nativeHTTP.request(url, 'GET', this.authHeader(), null);
+        if (result.status >= 400) {
+          this.notifyIfUnauthorized(result.status);
+          return { success: false, error: `HTTP ${result.status}` };
+        }
         return { success: true, data: result.body ?? '' };
       }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeout);
-      const resp = await fetch(url, { signal: controller.signal });
+      const resp = await fetch(url, { signal: controller.signal, headers: this.authHeader() });
       clearTimeout(timer);
-      if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+      if (!resp.ok) {
+        this.notifyIfUnauthorized(resp.status);
+        return { success: false, error: `HTTP ${resp.status}` };
+      }
       const text = await resp.text();
       return { success: true, data: text };
     } catch (err: any) {
