@@ -38,19 +38,14 @@ import type {
   Thumbnail,
   TemperatureData,
 } from './types';
-
-/** Best-effort require of an optional native dependency; undefined if absent. */
-function requireOptional<T>(id: string): T | undefined {
-  try {
-    // Indirect require (not a static `import`) keeps bundlers like Vite/webpack
-    // from resolving the specifier at build time, so non-RN consumers don't
-    // fail to build just because these optional native deps aren't installed.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return (typeof require === 'function' ? require(id) : undefined) as T | undefined;
-  } catch {
-    return undefined;
-  }
-}
+// Native deps come from a platform-resolved module: Metro picks
+// native-deps.native.ts (static react-native import), other bundlers get the
+// inert stubs in native-deps.ts. A dynamic require(id) here breaks Metro.
+import {
+  NativeModules as RawNativeModules,
+  Platform as RawPlatform,
+  RNFS as RawRNFS,
+} from './native-deps';
 
 interface NativeHTTPModuleShape {
   request(url: string, method: string, headers: Record<string, string>, body: string | null):
@@ -69,10 +64,9 @@ interface RNFSShape {
   unlink(path: string): Promise<void>;
 }
 
-const reactNative = requireOptional<{ NativeModules: NativeModulesShape; Platform: PlatformShape }>('react-native');
-const NativeModules = reactNative?.NativeModules;
-const Platform = reactNative?.Platform;
-const RNFS = requireOptional<{ default: RNFSShape }>('react-native-fs')?.default;
+const NativeModules = RawNativeModules as NativeModulesShape | undefined;
+const Platform = RawPlatform as PlatformShape | undefined;
+const RNFS = RawRNFS as RNFSShape | undefined;
 
 // ─── Default Config ────────────────────────────────────────
 
