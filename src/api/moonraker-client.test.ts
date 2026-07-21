@@ -44,6 +44,69 @@ describe('request retry timeout', () => {
   });
 });
 
+describe('blocking gcode sends: send-once, no duplicate execution', () => {
+  // A homing/calibration POST holds Moonraker's /printer/gcode/script response
+  // open until the move physically finishes (seconds→minutes). The generic
+  // retry loop must NOT re-POST it on a slow/failed attempt — Moonraker does
+  // not cancel the in-flight move when the client disconnects, so a re-send
+  // queues a SECOND homing. One tap on «Парковка» became three back-to-back
+  // homings on the kiosk (mode=local, timeout=5s < homing duration).
+
+  test('sendGcode issues exactly one request and never retries on failure', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(() => {
+      calls++;
+      return Promise.reject(new Error('transient network glitch'));
+    }));
+    const client = new MoonrakerClient({ baseUrl: 'http://x', mode: 'local', timeout: 50, maxRetries: 2 });
+
+    const res = await client.sendGcode('G28');
+
+    expect(res.success).toBe(false);
+    // Before fix: 3 (attempts 0,1,2) → two extra G28s queued on the printer.
+    expect(calls).toBe(1);
+  });
+
+  test('a slow homing is not aborted at the short base timeout (so it never trips a re-send)', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
+      calls++;
+      return new Promise((res, rej) => {
+        const t = setTimeout(
+          () => res(new Response(JSON.stringify({ result: 'ok' }), { status: 200 })),
+          120,
+        );
+        init.signal?.addEventListener('abort', () => {
+          clearTimeout(t);
+          rej(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      });
+    }));
+    // base timeout 50ms ≪ 120ms blocking response; a gcode send must outlast it.
+    const client = new MoonrakerClient({ baseUrl: 'http://x', mode: 'local', timeout: 50, maxRetries: 2 });
+
+    const res = await client.sendGcode('G28');
+
+    expect(res.success).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  test('idempotent GET polling still retries transient failures', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(() => {
+      calls++;
+      return Promise.reject(new Error('glitch'));
+    }));
+    const client = new MoonrakerClient({ baseUrl: 'http://x', mode: 'local', timeout: 20, maxRetries: 2 });
+
+    const res = await client.getServerInfo();
+
+    expect(res.success).toBe(false);
+    // GETs are safe to re-send; only non-idempotent writes must not be.
+    expect(calls).toBe(3);
+  });
+});
+
 describe('motion mode prefixes', () => {
   // Захватываем именно ту G-code строку, что уходит в /printer/gcode/script.
   function clientRecordingScripts() {
