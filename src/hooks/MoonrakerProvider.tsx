@@ -22,7 +22,7 @@ import {
 import { useStore } from 'zustand';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { MoonrakerClient } from '../api/moonraker-client';
-import { MoonrakerWebSocket, wsUrlFromHttp } from '../api/moonraker-ws';
+import { MoonrakerWebSocket, wsUrlFromHttp, wsdiag } from '../api/moonraker-ws';
 import type { ConnectionMode, PrinterStatus, MoonrakerConfig } from '../api/types';
 import { createPoller } from '../utils/poller';
 import {
@@ -170,6 +170,7 @@ export function MoonrakerProvider({
 
     // Listen for connection state
     const handleConnection = (data: any) => {
+      wsdiag(`provider: connection event connected=${data.connected === true}`);
       store.getState().setConnection({ wsConnected: data.connected === true });
 
       // When WS connects, subscribe to printer objects
@@ -198,7 +199,10 @@ export function MoonrakerProvider({
           exclude_object: null,
           fan: null,
           ...fsSub,
-        }).catch(() => {});
+        }).then(
+          () => wsdiag('provider: subscribe ACK'),
+          (e) => wsdiag(`provider: subscribe FAIL ${e}`),
+        );
       }
     };
 

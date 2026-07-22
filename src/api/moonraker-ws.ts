@@ -63,6 +63,23 @@ export function computeReconnectDelay(
   return Math.min(baseDelay * Math.pow(2, attempt), MAX_RECONNECT_DELAY_MS);
 }
 
+// ─── Diagnostics (gated) ───────────────────────────────────
+
+/**
+ * WS lifecycle tracing, OFF unless `globalThis.__WSDIAG__ === true`. Routed
+ * through console.warn so the kiosk shell's console→shell.log bridge captures
+ * it (WebKitGTK doesn't surface console otherwise). Temporary: used to root-
+ * cause the kiosk "connected but silent WS" latency; strip once resolved.
+ */
+export function wsdiag(msg: string): void {
+  try {
+    if (typeof globalThis !== 'undefined' && (globalThis as any).__WSDIAG__ === true) {
+      // eslint-disable-next-line no-console
+      console.warn(`[WSDIAG] ${msg}`);
+    }
+  } catch { /* logging must never break the socket */ }
+}
+
 // ─── Client ────────────────────────────────────────────────
 
 export class MoonrakerWebSocket {
@@ -75,6 +92,7 @@ export class MoonrakerWebSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _isConnected = false;
   private subscribedObjects: Record<string, string[] | null> = {};
+  private statusUpdateCount = 0; // WSDIAG: pushes actually received
 
   constructor(config: MoonrakerWsConfig) {
     this.config = {
@@ -95,9 +113,11 @@ export class MoonrakerWebSocket {
   connect(): void {
     if (this.ws) this.disconnect();
 
+    wsdiag(`connect() -> ${this.config.url}`);
     try {
       this.ws = new WebSocket(this.config.url);
-    } catch {
+    } catch (e) {
+      wsdiag(`WebSocket ctor threw: ${e}`);
       this.scheduleReconnect();
       return;
     }
@@ -105,6 +125,8 @@ export class MoonrakerWebSocket {
     this.ws.onopen = () => {
       this._isConnected = true;
       this.reconnectCount = 0;
+      this.statusUpdateCount = 0;
+      wsdiag('OPEN');
       this.emit('connection', { connected: true });
 
       // Re-subscribe if we had previous subscriptions.
@@ -116,7 +138,8 @@ export class MoonrakerWebSocket {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (ev: CloseEvent) => {
+      wsdiag(`CLOSE code=${ev?.code} reason=${ev?.reason || '-'} clean=${ev?.wasClean} statusUpdates=${this.statusUpdateCount}`);
       this._isConnected = false;
       this.rejectAllPending('WebSocket closed');
       this.emit('connection', { connected: false });
@@ -124,6 +147,7 @@ export class MoonrakerWebSocket {
     };
 
     this.ws.onerror = () => {
+      wsdiag('ERROR (onclose follows)');
       // onclose will fire after onerror
     };
 
@@ -168,6 +192,7 @@ export class MoonrakerWebSocket {
       this.config.reconnectDelay,
     );
     const delay = base + base * 0.3 * Math.random();
+    wsdiag(`reconnect in ${Math.round(delay)}ms (attempt ${this.reconnectCount})`);
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -274,6 +299,10 @@ export class MoonrakerWebSocket {
 
       // Special handling for status updates — emit parsed data
       if (eventName === 'notify_status_update' && Array.isArray(params)) {
+        this.statusUpdateCount++;
+        if (this.statusUpdateCount === 1 || this.statusUpdateCount % 25 === 0) {
+          wsdiag(`status_update #${this.statusUpdateCount}`);
+        }
         this.emit('status_update', params[0]);
       }
       // Moonraker sends console output as notify_gcode_response with params
