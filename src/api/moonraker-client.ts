@@ -75,6 +75,31 @@ const DEFAULTS = {
   remote: { pollInterval: 3000, timeout: 10000, maxRetries: 3 },
 } as const;
 
+/**
+ * Per-request overrides for `request()`. Blocking, non-idempotent commands
+ * (G-code sends) need both a longer deadline and zero retries; idempotent
+ * reads keep the mode defaults.
+ */
+interface RequestControl {
+  /** Abort deadline in ms; falls back to the mode default when omitted. */
+  timeoutMs?: number;
+  /** Retry budget; falls back to the mode default. Use 0 for non-idempotent
+   *  writes that must never be silently re-sent. */
+  retries?: number;
+}
+
+/**
+ * Blocking G-code (G28 homing, BED_MESH_CALIBRATE, PID_CALIBRATE, QUAD_GANTRY_LEVEL,
+ * M109/M190 heat-and-wait, …) holds Moonraker's /printer/gcode/script response open
+ * until the move physically completes — seconds to minutes. The generic 5–10 s
+ * request timeout would abort mid-command; the abort looks like a transient failure,
+ * the retry loop re-POSTs the SAME command, and Moonraker — which does not cancel an
+ * in-flight move when the client disconnects — queues and runs it AGAIN. One tap on
+ * homing became three back-to-back homings ("парковка по кругу"). So G-code sends get
+ * a generous deadline AND zero retries: a non-idempotent command is sent exactly once.
+ */
+const GCODE_SEND: RequestControl = { timeoutMs: 10 * 60_000, retries: 0 };
+
 // ─── Client ────────────────────────────────────────────────
 
 export interface GcodeSendEvent {
@@ -246,18 +271,21 @@ export class MoonrakerClient {
   private async request<T>(
     path: string,
     options: RequestInit = {},
+    control: RequestControl = {},
   ): Promise<ApiResult<T>> {
     const url = `${this.baseUrl}${path}`;
+    const timeout = control.timeoutMs ?? this.timeout;
+    const maxRetries = control.retries ?? this.maxRetries;
 
     if (this.shouldUseNativeHTTP(url)) {
       let lastError = 'Unknown error';
-      for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
         const result = await this.nativeRequest<T>(url, options);
         if (result.success) return result;
         lastError = result.error ?? lastError;
         // Don't retry 4xx
         if (lastError.startsWith('HTTP 4')) return result;
-        if (attempt < this.maxRetries) {
+        if (attempt < maxRetries) {
           await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
         }
       }
@@ -266,9 +294,9 @@ export class MoonrakerClient {
 
     let lastError: string = 'Unknown error';
 
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeout);
+      const timer = setTimeout(() => controller.abort(), timeout);
       try {
         const resp = await fetch(url, {
           ...options,
@@ -297,10 +325,10 @@ export class MoonrakerClient {
         return { success: true, data: json.result ?? json };
       } catch (err: any) {
         lastError = err?.name === 'AbortError'
-          ? `Request timed out after ${this.timeout}ms`
+          ? `Request timed out after ${timeout}ms`
           : err?.message ?? 'Network error';
 
-        if (attempt < this.maxRetries) {
+        if (attempt < maxRetries) {
           await new Promise<void>((r) => setTimeout(r, 500 * (attempt + 1)));
         }
       } finally {
@@ -315,11 +343,11 @@ export class MoonrakerClient {
     return this.request<T>(path);
   }
 
-  private post<T>(path: string, body?: unknown): Promise<ApiResult<T>> {
+  private post<T>(path: string, body?: unknown, control?: RequestControl): Promise<ApiResult<T>> {
     return this.request<T>(path, {
       method: 'POST',
       body: body ? JSON.stringify(body) : undefined,
-    });
+    }, control);
   }
 
   // ─── Server Info ───────────────────────────────────────
@@ -653,7 +681,9 @@ export class MoonrakerClient {
   }
 
   async sendGcode(script: string): Promise<ApiResult<void>> {
-    const completion = this.post<void>('/printer/gcode/script', { script });
+    // GCODE_SEND: generous deadline + zero retries — a blocking, non-idempotent
+    // command (homing, calibration, heat-and-wait) must be sent exactly once.
+    const completion = this.post<void>('/printer/gcode/script', { script }, GCODE_SEND);
     for (const cb of this.gcodeObservers) {
       try { cb({ script, completion }); } catch { /* observer bugs must not break sends */ }
     }
