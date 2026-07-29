@@ -46,3 +46,43 @@ describe('mergeStatusUpdate filament + save_variables', () => {
     expect(next.filamentSensors).toHaveLength(1);
   });
 });
+
+describe('mergeStatusUpdate toolhead realtime', () => {
+  test('merges homed_axes so the UI unlocks right after Home', () => {
+    // Without this the homed flags only ever arrived on the REST poll, which
+    // backs off to a 15 s heartbeat while the WS is live — presets and the
+    // "go to coordinates" button stayed disabled long after the printer had
+    // physically finished homing.
+    const next = mergeStatusUpdate(baseStatus(), {toolhead: {homed_axes: 'xy'}});
+    expect(next.toolhead.homed).toEqual([true, true, false]);
+  });
+
+  test('treats an empty homed_axes as fully un-homed', () => {
+    const prev = baseStatus();
+    prev.toolhead = {...prev.toolhead, homed: [true, true, true]};
+    const next = mergeStatusUpdate(prev, {toolhead: {homed_axes: ''}});
+    expect(next.toolhead.homed).toEqual([false, false, false]);
+  });
+
+  test('keeps homed flags when the update carries only a position', () => {
+    const prev = baseStatus();
+    prev.toolhead = {...prev.toolhead, homed: [true, true, true]};
+    const next = mergeStatusUpdate(prev, {toolhead: {position: [1, 2, 3, 4]}});
+    expect(next.toolhead.homed).toEqual([true, true, true]);
+    expect(next.toolhead.position).toEqual({x: 1, y: 2, z: 3, e: 4});
+  });
+
+  test('merges gcode_position — the live position Mainsail shows', () => {
+    const next = mergeStatusUpdate(baseStatus(), {
+      gcode_move: {gcode_position: [10, 20, 30, 40]},
+    });
+    expect(next.gcodeMove.gcodePosition).toEqual({x: 10, y: 20, z: 30, e: 40});
+  });
+
+  test('leaves gcode_position alone when the update omits it', () => {
+    const prev = baseStatus();
+    const next = mergeStatusUpdate(prev, {gcode_move: {speed_factor: 0.5}});
+    expect(next.gcodeMove.speedFactor).toBe(0.5);
+    expect(next.gcodeMove.gcodePosition).toBeUndefined();
+  });
+});

@@ -140,6 +140,12 @@ export interface GcodeMove {
   extrudeFactor: number;
   /** Current commanded speed in mm/s. */
   speed: number;
+  /**
+   * Live G-code position — what Mainsail and Fluidd display while the machine
+   * moves. Absent until a `gcode_move` update carrying it arrives, so consumers
+   * must fall back to `toolhead.position`.
+   */
+  gcodePosition?: Position;
 }
 
 // ─── Fan ───────────────────────────────────────────────────

@@ -380,14 +380,24 @@ export function mergeStatusUpdate(
     };
   }
 
-  // gcode_move
+  // gcode_move — including gcode_position, the live position Mainsail/Fluidd
+  // show. toolhead.position lags it, so consumers prefer this when present.
   if (update.gcode_move) {
     const gm = update.gcode_move;
+    const prevGcodeMove = prev.gcodeMove ?? { speedFactor: 1, extrudeFactor: 1, speed: 0 };
     next.gcodeMove = {
-      ...(prev.gcodeMove ?? { speedFactor: 1, extrudeFactor: 1, speed: 0 }),
+      ...prevGcodeMove,
       ...(gm.speed_factor !== undefined && { speedFactor: gm.speed_factor }),
       ...(gm.extrude_factor !== undefined && { extrudeFactor: gm.extrude_factor }),
       ...(gm.speed !== undefined && { speed: gm.speed }),
+      ...(Array.isArray(gm.gcode_position) && {
+        gcodePosition: {
+          x: gm.gcode_position[0] ?? prevGcodeMove.gcodePosition?.x ?? 0,
+          y: gm.gcode_position[1] ?? prevGcodeMove.gcodePosition?.y ?? 0,
+          z: gm.gcode_position[2] ?? prevGcodeMove.gcodePosition?.z ?? 0,
+          e: gm.gcode_position[3] ?? prevGcodeMove.gcodePosition?.e ?? 0,
+        },
+      }),
     };
   }
 
@@ -464,18 +474,26 @@ export function mergeStatusUpdate(
     };
   }
 
-  // Toolhead
+  // Toolhead. homed_axes must be merged here too, not just parsed on the REST
+  // poll: while the WS is live that poll backs off to a 15 s heartbeat, so
+  // homing left every homed-gated control (presets, "go to coordinates") stuck
+  // disabled long after the machine had physically parked.
   if (update.toolhead) {
     const th = update.toolhead;
-    if (th.position) {
+    if (th.position || th.homed_axes !== undefined) {
       next.toolhead = {
         ...prev.toolhead,
-        position: {
-          x: th.position[0] ?? prev.toolhead.position.x,
-          y: th.position[1] ?? prev.toolhead.position.y,
-          z: th.position[2] ?? prev.toolhead.position.z,
-          e: th.position[3] ?? prev.toolhead.position.e,
-        },
+        ...(th.position && {
+          position: {
+            x: th.position[0] ?? prev.toolhead.position.x,
+            y: th.position[1] ?? prev.toolhead.position.y,
+            z: th.position[2] ?? prev.toolhead.position.z,
+            e: th.position[3] ?? prev.toolhead.position.e,
+          },
+        }),
+        ...(th.homed_axes !== undefined && {
+          homed: ['x', 'y', 'z'].map((a) => String(th.homed_axes).includes(a)),
+        }),
       };
     }
   }
