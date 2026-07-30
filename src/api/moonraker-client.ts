@@ -33,6 +33,7 @@ import type {
   KlipperState,
   MoonrakerServerInfo,
   GcodeMacro,
+  GcodeMove,
   FilamentSensorState,
   FanState,
   Thumbnail,
@@ -506,11 +507,22 @@ export class MoonrakerClient {
     };
 
     // gcode_move — speed factor / extrude factor for Mainsail-style HUD.
+    // gcode_position is parsed here too, not only in the WS merge: the REST
+    // poll rebuilds this whole slice, so a WS-only field would be wiped on
+    // every heartbeat and consumers would see it blink in and out of existence.
     const gm = obj.gcode_move ?? {};
-    const gcodeMove = {
+    const gcodeMove: GcodeMove = {
       speedFactor: Number(gm.speed_factor ?? 1),
       extrudeFactor: Number(gm.extrude_factor ?? 1),
       speed: Number(gm.speed ?? 0),
+      ...(Array.isArray(gm.gcode_position) && {
+        gcodePosition: {
+          x: Number(gm.gcode_position[0] ?? 0),
+          y: Number(gm.gcode_position[1] ?? 0),
+          z: Number(gm.gcode_position[2] ?? 0),
+          e: Number(gm.gcode_position[3] ?? 0),
+        },
+      }),
     };
 
     // Part cooling fan — Klipper [fan] section, speed is 0..1 fraction.
