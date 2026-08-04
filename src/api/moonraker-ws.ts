@@ -276,7 +276,10 @@ export class MoonrakerWebSocket {
 
   // ─── Events ────────────────────────────────────────────
 
-  on(event: MoonrakerEventType | 'connection' | 'status_update' | 'gcode_response', callback: EventCallback): void {
+  on(
+    event: MoonrakerEventType | 'connection' | 'status_update' | 'gcode_response' | 'gcode_error',
+    callback: EventCallback,
+  ): void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
@@ -285,6 +288,24 @@ export class MoonrakerWebSocket {
 
   off(event: string, callback: EventCallback): void {
     this.listeners.get(event)?.delete(callback);
+  }
+
+  /**
+   * Report a command WE sent that the printer refused.
+   *
+   * Deliberately narrow rather than a public `emit`: this is the one kind of
+   * event the SDK raises locally, and nothing else should be able to forge
+   * Moonraker traffic through this class.
+   *
+   * It exists because a rejection is not always broadcast. Klipper puts
+   * «!! …» on `notify_gcode_response` when it refuses a command it accepted
+   * for execution — but a Klippy shutdown, a not-ready printer or a Moonraker
+   * level rejection never reaches that stream at all. Those failures come back
+   * only as the send call's own error, so without this channel the UI has
+   * nothing to show and the button looks dead.
+   */
+  notifyLocalGcodeError(text: string): void {
+    this.emit('gcode_error', text);
   }
 
   private emit(event: string, data: any): void {

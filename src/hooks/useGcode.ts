@@ -77,22 +77,31 @@ export function useGcode(): GcodeValue {
         };
         setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
         setLastResponse(response);
+        // Announce the refusal instead of only returning it. Callers are
+        // overwhelmingly fire-and-forget (`sendGcode("M84")` from a button),
+        // so a returned error string is a failure nobody sees — the toolhead
+        // does not move and the UI stays silent.
+        if (!result.success) {
+          ws.notifyLocalGcodeError(response ?? 'Command failed');
+        }
         return response;
       } catch (err: any) {
+        const message = err?.message ?? 'Send failed';
         const entry: GcodeHistoryEntry = {
           command,
-          response: err?.message ?? 'Send failed',
+          response: message,
           timestamp: Date.now(),
           success: false,
         };
         setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
         setLastResponse(null);
+        ws.notifyLocalGcodeError(message);
         return null;
       } finally {
         setIsSending(false);
       }
     },
-    [client],
+    [client, ws],
   );
 
   const clearHistory = useCallback(() => {
