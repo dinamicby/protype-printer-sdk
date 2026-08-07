@@ -7,7 +7,12 @@
  * - Server pushes events: gcode responses, klippy state changes, etc.
  */
 import type { MoonrakerEventType } from './types';
-import { bearerHeader, type AuthTokenProvider } from '../utils/auth';
+import {
+  apiKeyHeader,
+  bearerHeader,
+  type ApiKeyProvider,
+  type AuthTokenProvider,
+} from '../utils/auth';
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -54,6 +59,16 @@ export interface MoonrakerWsConfig {
    * on platforms that don't (browsers), the header is silently ignored.
    */
   getAuthToken?: AuthTokenProvider;
+  /**
+   * Resolves the current `X-Api-Key` for a Moonraker with `[authorization]`
+   * enabled, sent as a header on the WebSocket upgrade. Read fresh on every
+   * (re)connect, like the bearer.
+   *
+   * A third-party Klipper needs this and has no ProControl proxy in front of
+   * it; a Protype printer is the other way round. Both are sent when both are
+   * configured — they authorize against different things.
+   */
+  getApiKey?: ApiKeyProvider;
 }
 
 /** Maximum reconnect backoff (ms). */
@@ -110,6 +125,7 @@ export class MoonrakerWebSocket {
       maxReconnects: Infinity,
       rpcTimeout: 10000,
       getAuthToken: () => undefined,
+      getApiKey: () => undefined,
       ...config,
     };
   }
@@ -125,11 +141,16 @@ export class MoonrakerWebSocket {
 
     wsdiag(`connect() -> ${this.config.url}`);
     try {
-      // Read the token fresh on every (re)connect so a token refreshed since
-      // the last connection is used. React Native's WebSocket accepts a
-      // headers option as the 3rd arg; the ProControl proxy requires the
-      // Bearer header on the upgrade request for remote (VPN) clients.
-      const headers = bearerHeader(this.config.getAuthToken());
+      // Read both fresh on every (re)connect: the token may have been
+      // refreshed and the key corrected since the last connection. React
+      // Native's WebSocket accepts a headers option as the 3rd arg; the
+      // ProControl proxy requires the Bearer header on the upgrade request for
+      // remote (VPN) clients, a third-party Moonraker with [authorization]
+      // requires X-Api-Key instead.
+      const headers = {
+        ...bearerHeader(this.config.getAuthToken()),
+        ...apiKeyHeader(this.config.getApiKey?.()),
+      };
       this.ws =
         Object.keys(headers).length > 0
           ? // React Native's WebSocket takes a 3rd `{ headers }` options arg
