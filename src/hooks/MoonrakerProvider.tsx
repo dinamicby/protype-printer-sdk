@@ -94,6 +94,13 @@ interface MoonrakerProviderProps {
    * refresh — otherwise the client/WS would be recreated each refresh.
    */
   getAuthToken?: () => string | null | undefined;
+  /**
+   * Resolves the current `X-Api-Key` for a Moonraker with `[authorization]`
+   * enabled. Like {@link getAuthToken} it should be a stable reference so the
+   * client/WS are not recreated when the key changes; the client reads it
+   * fresh per request.
+   */
+  getApiKey?: () => string | null | undefined;
   /** Called when a printer request is rejected with 401 (token likely expired). */
   onAuthError?: () => void;
 }
@@ -107,6 +114,7 @@ export function MoonrakerProvider({
   pollInterval,
   disableWebSocket = false,
   getAuthToken,
+  getApiKey,
   onAuthError,
 }: MoonrakerProviderProps) {
   // Keep the auth callbacks in refs so the client/WS aren't recreated when the
@@ -114,6 +122,8 @@ export function MoonrakerProvider({
   // reads the token fresh per request via these stable wrappers.
   const getAuthTokenRef = useRef(getAuthToken);
   getAuthTokenRef.current = getAuthToken;
+  const getApiKeyRef = useRef(getApiKey);
+  getApiKeyRef.current = getApiKey;
   const onAuthErrorRef = useRef(onAuthError);
   onAuthErrorRef.current = onAuthError;
 
@@ -121,6 +131,7 @@ export function MoonrakerProvider({
     () => getAuthTokenRef.current?.(),
     [],
   );
+  const stableGetApiKey = useCallback(() => getApiKeyRef.current?.(), []);
   const stableOnAuthError = useCallback(() => onAuthErrorRef.current?.(), []);
 
   // Stable config reference
@@ -130,9 +141,10 @@ export function MoonrakerProvider({
       mode,
       pollInterval,
       getAuthToken: stableGetAuthToken,
+      getApiKey: stableGetApiKey,
       onAuthError: stableOnAuthError,
     }),
-    [baseUrl, mode, pollInterval, stableGetAuthToken, stableOnAuthError],
+    [baseUrl, mode, pollInterval, stableGetAuthToken, stableGetApiKey, stableOnAuthError],
   );
 
   // REST client
@@ -150,8 +162,9 @@ export function MoonrakerProvider({
       autoReconnect: true,
       reconnectDelay: mode === 'local' ? 1000 : 3000,
       getAuthToken: stableGetAuthToken,
+      getApiKey: stableGetApiKey,
     });
-  }, [baseUrl, mode, stableGetAuthToken]);
+  }, [baseUrl, mode, stableGetAuthToken, stableGetApiKey]);
 
   // Keep ref in sync
   useEffect(() => {
