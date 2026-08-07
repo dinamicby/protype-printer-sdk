@@ -86,3 +86,66 @@ describe('mergeStatusUpdate toolhead realtime', () => {
     expect(next.gcodeMove.gcodePosition).toBeUndefined();
   });
 });
+
+describe('mergeStatusUpdate temperatures', () => {
+  // Regression: every heater block rebuilt next.temperatures from
+  // prev.temperatures, so each one discarded the block before it. A batched WS
+  // update carrying several heaters only applied the LAST match — the others
+  // stayed stale until the 3 s HTTP poll caught up.
+  test('applies extruder and heater_bed carried in the same update', () => {
+    const next = mergeStatusUpdate(baseStatus(), {
+      extruder: {temperature: 210},
+      heater_bed: {temperature: 60},
+    });
+    expect(next.temperatures.extruder!.temperature).toBe(210);
+    expect(next.temperatures.heaterBed!.temperature).toBe(60);
+  });
+
+  test('applies every heater carried in the same update', () => {
+    const next = mergeStatusUpdate(baseStatus(), {
+      extruder: {temperature: 210},
+      extruder1: {temperature: 205},
+      heater_bed: {temperature: 60},
+      'heater_generic Active_Chamber': {temperature: 45},
+      'heater_generic Drying_Chamber_1': {temperature: 55},
+      'heater_generic Drying_Chamber_2': {temperature: 56},
+      'heater_generic Drying_Chamber_3': {temperature: 57},
+      'heater_generic Drying_Chamber_4': {temperature: 58},
+      'temperature_sensor bed_glass': {temperature: 59},
+    });
+    expect(next.temperatures.extruder!.temperature).toBe(210);
+    expect(next.temperatures.extruder1!.temperature).toBe(205);
+    expect(next.temperatures.heaterBed!.temperature).toBe(60);
+    expect(next.temperatures.heaterChamber!.temperature).toBe(45);
+    expect(next.temperatures.dryingChamber1!.temperature).toBe(55);
+    expect(next.temperatures.dryingChamber2!.temperature).toBe(56);
+    expect(next.temperatures.dryingChamber3!.temperature).toBe(57);
+    expect(next.temperatures.dryingChamber4!.temperature).toBe(58);
+    expect(next.temperatures.bedGlass!.temperature).toBe(59);
+  });
+
+  test('preserves heaters absent from the update', () => {
+    const prev = baseStatus();
+    prev.temperatures = {
+      ...prev.temperatures,
+      heaterBed: {temperature: 60, target: 60, power: 0.4},
+    };
+    const next = mergeStatusUpdate(prev, {extruder: {temperature: 210}});
+    expect(next.temperatures.heaterBed).toEqual({temperature: 60, target: 60, power: 0.4});
+  });
+
+  test('merges heater fields without mutating prev', () => {
+    const prev = baseStatus();
+    prev.temperatures = {
+      ...prev.temperatures,
+      extruder: {temperature: 25, target: 0, power: 0},
+    };
+    const next = mergeStatusUpdate(prev, {
+      extruder: {target: 215},
+      heater_bed: {temperature: 60},
+    });
+    expect(next.temperatures.extruder).toEqual({temperature: 25, target: 215, power: 0});
+    expect(prev.temperatures.extruder).toEqual({temperature: 25, target: 0, power: 0});
+    expect(prev.temperatures.heaterBed).toBeNull();
+  });
+});

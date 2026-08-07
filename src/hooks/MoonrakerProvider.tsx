@@ -422,55 +422,55 @@ export function mergeStatusUpdate(
   // Temperatures
   if (update.extruder) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       extruder: mergeHeater(prev.temperatures.extruder, update.extruder),
     };
   }
   if (update.extruder1) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       extruder1: mergeHeater(prev.temperatures.extruder1, update.extruder1),
     };
   }
   if (update.heater_bed) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       heaterBed: mergeHeater(prev.temperatures.heaterBed, update.heater_bed),
     };
   }
   if (update['heater_generic Active_Chamber']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       heaterChamber: mergeHeater(prev.temperatures.heaterChamber, update['heater_generic Active_Chamber']),
     };
   }
   if (update['heater_generic Drying_Chamber_1']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       dryingChamber1: mergeHeater(prev.temperatures.dryingChamber1, update['heater_generic Drying_Chamber_1']),
     };
   }
   if (update['heater_generic Drying_Chamber_2']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       dryingChamber2: mergeHeater(prev.temperatures.dryingChamber2, update['heater_generic Drying_Chamber_2']),
     };
   }
   if (update['heater_generic Drying_Chamber_3']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       dryingChamber3: mergeHeater(prev.temperatures.dryingChamber3, update['heater_generic Drying_Chamber_3']),
     };
   }
   if (update['heater_generic Drying_Chamber_4']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       dryingChamber4: mergeHeater(prev.temperatures.dryingChamber4, update['heater_generic Drying_Chamber_4']),
     };
   }
   if (update['temperature_sensor bed_glass']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       bedGlass: mergeHeater(prev.temperatures.bedGlass, update['temperature_sensor bed_glass']),
     };
   }
