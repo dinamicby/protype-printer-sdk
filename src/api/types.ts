@@ -26,6 +26,17 @@ export interface MoonrakerConfig {
    */
   getAuthToken?: () => string | null | undefined;
   /**
+   * Returns the current `X-Api-Key` for a Moonraker with `[authorization]`
+   * enabled, or null when the printer needs no key. Called per request, like
+   * {@link getAuthToken}, so a corrected key is picked up without recreating
+   * the client.
+   *
+   * Orthogonal to {@link getAuthToken}, not an alternative: the ProControl
+   * proxy wants a bearer, a third-party Moonraker wants this key, and nothing
+   * stops a deployment from needing both.
+   */
+  getApiKey?: () => string | null | undefined;
+  /**
    * Invoked when a printer request is rejected with HTTP 401 (token likely
    * expired). The host app can use this to trigger a token refresh; the next
    * poll/request then picks up the fresh token via {@link getAuthToken}.

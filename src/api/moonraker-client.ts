@@ -19,7 +19,7 @@
  * declarations — so typechecking never depends on those deps being
  * installed either.
  */
-import { bearerHeader } from '../utils/auth';
+import { apiKeyHeader, bearerHeader } from '../utils/auth';
 import type {
   MoonrakerConfig,
   ApiResult,
@@ -185,12 +185,19 @@ export class MoonrakerClient {
   // ─── Low-level HTTP ────────────────────────────────────
 
   /**
-   * Authorization header for the ProControl proxy, read fresh per request so a
-   * refreshed token is used without recreating the client. Empty when there is
-   * no token (bare Moonraker on a trusted LAN).
+   * Auth headers for this printer, read fresh per request so a refreshed token
+   * or a corrected key is used without recreating the client.
+   *
+   * Two independent headers, and a printer may want either, both or neither:
+   * the bearer authorizes against the ProControl proxy, `X-Api-Key` against a
+   * third-party Moonraker with `[authorization]` enabled. Empty when neither is
+   * configured — a bare Moonraker on a trusted LAN.
    */
   private authHeader(): Record<string, string> {
-    return bearerHeader(this.config.getAuthToken?.());
+    return {
+      ...bearerHeader(this.config.getAuthToken?.()),
+      ...apiKeyHeader(this.config.getApiKey?.()),
+    };
   }
 
   /**

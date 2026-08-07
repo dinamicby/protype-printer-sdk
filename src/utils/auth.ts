@@ -18,3 +18,21 @@ export function bearerHeader(
 ): Record<string, string> {
   return token ? {Authorization: `Bearer ${token}`} : {};
 }
+
+/** Resolves the current Moonraker API key, or null/undefined when none is set. */
+export type ApiKeyProvider = () => string | null | undefined;
+
+/**
+ * Build the `X-Api-Key` header for a Moonraker with `[authorization]` enabled.
+ *
+ * Orthogonal to {@link bearerHeader}, not an alternative to it: the bearer
+ * authorizes against the ProControl proxy, this key against Moonraker itself,
+ * and a request can legitimately need both. Returns an empty object when there
+ * is no key so callers can spread it unconditionally — an empty string means
+ * "no key", not "a key that is empty".
+ */
+export function apiKeyHeader(
+  key: string | null | undefined,
+): Record<string, string> {
+  return key ? {'X-Api-Key': key} : {};
+}
