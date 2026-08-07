@@ -71,6 +71,17 @@ export interface MoonrakerWsConfig {
   getApiKey?: ApiKeyProvider;
 }
 
+/**
+ * The WebSocket constructor as React Native actually exposes it — with the
+ * third `{ headers }` argument the DOM lib does not declare. See `connect()`
+ * for why this is a cast rather than a suppression comment.
+ */
+type WebSocketWithHeaders = new (
+  url: string,
+  protocols: string | string[] | undefined,
+  options: {headers: Record<string, string>},
+) => WebSocket;
+
 /** Maximum reconnect backoff (ms). */
 const MAX_RECONNECT_DELAY_MS = 30000;
 
@@ -151,12 +162,19 @@ export class MoonrakerWebSocket {
         ...bearerHeader(this.config.getAuthToken()),
         ...apiKeyHeader(this.config.getApiKey?.()),
       };
+      // React Native's WebSocket takes a 3rd `{ headers }` options arg that the
+      // DOM lib's constructor type doesn't model. A `@ts-expect-error` cannot
+      // express this: it is required under the DOM lib (this package's own
+      // tsconfig) and *unused* under React Native's types (the consuming app's),
+      // so whichever we pick, one of the two typechecks fails. Casting the
+      // constructor satisfies both.
       this.ws =
         Object.keys(headers).length > 0
-          ? // React Native's WebSocket takes a 3rd `{ headers }` options arg
-            // that the DOM lib's constructor type doesn't model.
-            // @ts-expect-error RN WebSocket accepts a headers option
-            new WebSocket(this.config.url, undefined, {headers})
+          ? new (WebSocket as unknown as WebSocketWithHeaders)(
+              this.config.url,
+              undefined,
+              {headers},
+            )
           : new WebSocket(this.config.url);
     } catch (e) {
       wsdiag(`WebSocket ctor threw: ${e}`);
@@ -180,8 +198,16 @@ export class MoonrakerWebSocket {
       }
     };
 
-    this.ws.onclose = (ev: CloseEvent) => {
-      wsdiag(`CLOSE code=${ev?.code} reason=${ev?.reason || '-'} clean=${ev?.wasClean} statusUpdates=${this.statusUpdateCount}`);
+    // Parameter type left to inference: the DOM lib hands this handler a
+    // `CloseEvent`, React Native a `WebSocketCloseEvent`, and naming either one
+    // breaks the other's typecheck. Every field read below is optional-guarded.
+    this.ws.onclose = ev => {
+      // Read through a widened shape: `wasClean` exists on the DOM's
+      // CloseEvent but not on React Native's WebSocketCloseEvent, and this is
+      // a diagnostic line — an absent field should print `undefined`, not fail
+      // one of the two typechecks.
+      const closed = ev as {code?: number; reason?: string; wasClean?: boolean} | undefined;
+      wsdiag(`CLOSE code=${closed?.code} reason=${closed?.reason || '-'} clean=${closed?.wasClean} statusUpdates=${this.statusUpdateCount}`);
       this._isConnected = false;
       this.rejectAllPending('WebSocket closed');
       this.emit('connection', { connected: false });
