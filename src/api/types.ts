@@ -269,6 +269,30 @@ export interface MoonrakerServerInfo {
   apiVersionString: string;
 }
 
+// ─── Webcams ───────────────────────────────────────────────
+
+/**
+ * A camera configured in Moonraker (`/server/webcams/list`).
+ *
+ * Note this list is empty on Protype printers — they have no `[webcam]`
+ * sections and serve their stream through go2rtc — and is the *only* source of
+ * cameras on a third-party Klipper, which has no go2rtc at all. A consumer
+ * therefore has to merge the two, not pick one.
+ */
+export interface WebcamConfig {
+  name: string;
+  location: string;
+  service: string;
+  streamUrl: string;
+  snapshotUrl: string;
+  targetFps: number;
+  flipHorizontal: boolean;
+  flipVertical: boolean;
+  rotation: number;
+  aspectRatio: string;
+  enabled: boolean;
+}
+
 // ─── API Result wrapper ────────────────────────────────────
 
 export interface ApiResult<T> {

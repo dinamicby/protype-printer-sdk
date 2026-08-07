@@ -38,7 +38,9 @@ import type {
   FanState,
   Thumbnail,
   TemperatureData,
+  WebcamConfig,
 } from './types';
+import { parseWebcam } from './webcams';
 // Native deps come from a platform-resolved module: Metro picks
 // native-deps.native.ts (static react-native import), other bundlers get the
 // inert stubs in native-deps.ts. A dynamic require(id) here breaks Metro.
@@ -375,6 +377,24 @@ export class MoonrakerClient {
         apiVersionString: d.api_version_string ?? '',
       },
     };
+  }
+
+  /**
+   * Cameras configured in Moonraker (`GET /server/webcams/list`).
+   *
+   * Empty on Protype printers — there are no `[webcam]` sections in their
+   * `moonraker.conf` and the stream comes from go2rtc. On a third-party Klipper
+   * it is the other way round: no go2rtc, but these records exist. A consumer
+   * must therefore **merge** the two sources rather than choose between them.
+   *
+   * A printer whose Moonraker predates the webcam API answers 404; that is an
+   * absence of cameras, not a failure, so it surfaces as an empty list.
+   */
+  async getWebcams(): Promise<ApiResult<WebcamConfig[]>> {
+    const res = await this.get<any>('/server/webcams/list');
+    if (!res.success || !res.data) return { success: true, data: [] };
+    const cams: any[] = res.data.webcams ?? [];
+    return { success: true, data: cams.map(parseWebcam) };
   }
 
   /**

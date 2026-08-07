@@ -34,6 +34,7 @@ export type {
   PrintHistoryJob,
   GcodeMacro,
   MoonrakerServerInfo,
+  WebcamConfig,
   ApiResult,
   MoonrakerEvent,
   MoonrakerEventType,
