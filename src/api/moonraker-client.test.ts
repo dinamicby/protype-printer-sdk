@@ -140,3 +140,39 @@ describe('motion mode prefixes', () => {
     expect(scripts).toEqual(['G91\nG1 Z5 F600\nG90']);
   });
 });
+
+describe('getObjectsList / getConfigSettings: a failed request must not read as an empty printer', () => {
+  // Unlike /server/webcams/list (missing on old Moonraker, so 404 legitimately
+  // means "no cameras"), /printer/objects/list and /printer/objects/query exist
+  // on every Moonraker version. A failure here is a network/auth error or a
+  // disconnected Klippy — never "this printer has no objects" — so it must come
+  // back as success: false, not get coerced into an empty list/object.
+
+  test('getObjectsList propagates the failure instead of faking an empty list', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve(new Response('{"error":{"message":"Klippy disconnected"}}', { status: 400 }))));
+    const client = new MoonrakerClient({ baseUrl: 'http://x', mode: 'local', timeout: 50, maxRetries: 0 });
+
+    const res = await client.getObjectsList();
+
+    // Before fix: { success: true, data: [] } — indistinguishable from a printer
+    // that genuinely has no configured objects.
+    expect(res.success).toBe(false);
+    expect(res.data).toBeUndefined();
+    expect(res.error).toContain('Klippy disconnected');
+  });
+
+  test('getConfigSettings propagates the failure instead of faking an empty object', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve(new Response('{"error":{"message":"Klippy disconnected"}}', { status: 400 }))));
+    const client = new MoonrakerClient({ baseUrl: 'http://x', mode: 'local', timeout: 50, maxRetries: 0 });
+
+    const res = await client.getConfigSettings();
+
+    // Before fix: { success: true, data: {} } — a network blip would read as a
+    // printer with an empty config instead of surfacing the failure.
+    expect(res.success).toBe(false);
+    expect(res.data).toBeUndefined();
+    expect(res.error).toContain('Klippy disconnected');
+  });
+});

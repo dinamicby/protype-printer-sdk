@@ -407,7 +407,7 @@ export class MoonrakerClient {
    */
   async getObjectsList(): Promise<ApiResult<string[]>> {
     const res = await this.get<any>('/printer/objects/list');
-    if (!res.success) return { success: true, data: [] };
+    if (!res.success) return { success: false, error: res.error };
     return { success: true, data: parseObjectsList(res.data) };
   }
 
@@ -420,7 +420,7 @@ export class MoonrakerClient {
    */
   async getConfigSettings(): Promise<ApiResult<Record<string, unknown>>> {
     const res = await this.get<any>('/printer/objects/query?configfile=settings');
-    if (!res.success) return { success: true, data: {} };
+    if (!res.success) return { success: false, error: res.error };
     return { success: true, data: parseConfigSettings(res.data) };
   }
 
