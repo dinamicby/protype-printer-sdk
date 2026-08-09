@@ -41,6 +41,7 @@ import type {
   WebcamConfig,
 } from './types';
 import { parseWebcam } from './webcams';
+import { parseObjectsList, parseConfigSettings } from './objects';
 // Native deps come from a platform-resolved module: Metro picks
 // native-deps.native.ts (static react-native import), other bundlers get the
 // inert stubs in native-deps.ts. A dynamic require(id) here breaks Metro.
@@ -395,6 +396,32 @@ export class MoonrakerClient {
     if (!res.success || !res.data) return { success: true, data: [] };
     const cams: any[] = res.data.webcams ?? [];
     return { success: true, data: cams.map(parseWebcam) };
+  }
+
+  /**
+   * Every section the printer declares (`/printer/objects/list`).
+   *
+   * Bare objects come through as `bed_mesh`, configured sections as
+   * `<kind> <name>`. This answers "what does the machine have" without probing
+   * it, and both the capability gate and the FilaCore topology are read off it.
+   */
+  async getObjectsList(): Promise<ApiResult<string[]>> {
+    const res = await this.get<any>('/printer/objects/list');
+    if (!res.success) return { success: true, data: [] };
+    return { success: true, data: parseObjectsList(res.data) };
+  }
+
+  /**
+   * `configfile.settings` — the parsed printer.cfg, section by section.
+   *
+   * The macro bodies live here, and an `ACTIVATE_EXTRUDER EXTRUDER=` line inside
+   * `choose_spool_<n>` is the only place the firmware itself states which tool a
+   * slot feeds. Guessing that heats the wrong hotend.
+   */
+  async getConfigSettings(): Promise<ApiResult<Record<string, unknown>>> {
+    const res = await this.get<any>('/printer/objects/query?configfile=settings');
+    if (!res.success) return { success: true, data: {} };
+    return { success: true, data: parseConfigSettings(res.data) };
   }
 
   /**
