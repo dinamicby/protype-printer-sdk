@@ -46,6 +46,7 @@ import {
   genericHeaterSlots,
   parseGenericHeaters,
 } from './heaters';
+import type { PrinterIdentity } from './match-printer-model';
 // Native deps come from a platform-resolved module: Metro picks
 // native-deps.native.ts (static react-native import), other bundlers get the
 // inert stubs in native-deps.ts. A dynamic require(id) here breaks Metro.
@@ -1241,6 +1242,36 @@ export class MoonrakerClient {
         Object.entries(raw.service_state).map(([k, v]: [string, any]) => [k, { activeState: v.active_state, subState: v.sub_state }])
       ) : undefined,
     }};
+  }
+
+  /**
+   * Чем принтер представляется — для подбора картинки его модели.
+   *
+   * `getPrinterInfo` и `getSystemInfo` выше обе эти строки теряют при разборе:
+   * первая оставляет только состояние Klipper, вторая — только железо и сервисы.
+   *
+   * Никогда не бросает и никогда не отдаёт пустую личность: отсутствие ответа
+   * не должно отличаться от «принтер не знает, кто он», потому что и то и
+   * другое означает ровно одно — общая картинка.
+   */
+  async getPrinterIdentity(): Promise<PrinterIdentity | null> {
+    const [info, system] = await Promise.all([
+      this.get<any>('/printer/info').catch(() => null),
+      this.get<any>('/machine/system_info').catch(() => null),
+    ]);
+
+    const asString = (value: unknown): string | null => {
+      const trimmed = typeof value === 'string' ? value.trim() : '';
+      return trimmed || null;
+    };
+
+    const hostname = info?.success ? asString(info.data?.hostname) : null;
+    const machineName = system?.success
+      ? asString(system.data?.system_info?.machine_name ?? system.data?.machine_name)
+      : null;
+
+    if (!hostname && !machineName) return null;
+    return { hostname, machineName };
   }
 
   async getProcStats(): Promise<ApiResult<any>> {

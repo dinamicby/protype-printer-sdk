@@ -26,6 +26,14 @@ export {
   parseGenericHeaters,
 } from './api/heaters';
 export type { GenericHeaterSlots } from './api/heaters';
+// Подбор модели по тому, чем принтер представился: `getPrinterIdentity()` на
+// клиенте отдаёт личность, эта функция сопоставляет её с каталогом.
+export { matchPrinterModel } from './api/match-printer-model';
+export type {
+  MatchableModel,
+  MatchableVendor,
+  PrinterIdentity,
+} from './api/match-printer-model';
 
 // ─── Types ──────────────────────────────────────────
 export type {
