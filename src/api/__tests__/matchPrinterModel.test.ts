@@ -77,6 +77,27 @@ describe('отказ вместо догадки', () => {
       .toBeNull();
   });
 
+  test('ничья и в шаге 1: ключ одной модели совпал с алиасом другой', () => {
+    // Алиасы курируются вручную на сервере — коллизия чужого алиаса с чужим
+    // ключом реальна. Шаг 1 обязан отказаться так же, как шаг 2 выше, а не
+    // выбирать по порядку в массиве.
+    const models = [
+      model('qidi-x-max-4', 'qidi', 'QIDI X-Max 4'),
+      model('qidi-x-max-4-plus', 'qidi', 'QIDI X-Max 4 Plus', ['qidi-x-max-4']),
+    ];
+    expect(matchPrinterModel({ hostname: 'qidi-x-max-4', machineName: null }, models, VENDORS))
+      .toBeNull();
+  });
+
+  test('токен хоста не должен собираться на стыке двух слов модели', () => {
+    // "tram" — не слово в "Xtra Max", это склейка хвоста "xtra" и головы
+    // "max". Сравнение обязано идти токен-к-токену, а не со склейкой всего
+    // имени модели в одну строку.
+    const models = [model('qidi-x-tram-4', 'qidi', 'QIDI Xtra Max 4')];
+    expect(matchPrinterModel({ hostname: 'qidi-tram4', machineName: 'QIDI' }, models, VENDORS))
+      .toBeNull();
+  });
+
   test('нет цифр — нечем отличить, отказ', () => {
     expect(matchPrinterModel({ hostname: 'printer', machineName: 'QIDI' }, QIDI_MODELS, VENDORS))
       .toBeNull();

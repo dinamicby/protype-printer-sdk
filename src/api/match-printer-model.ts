@@ -64,11 +64,18 @@ export function matchPrinterModel(
   if (!host) return null;
 
   // Шаг 1. Точный матч по ключу и алиасам — механизм, который каталог везёт
-  // именно для этого. Дешевле всего и не может ошибиться.
+  // именно для этого. Дешевле всего, но не застрахован от неоднозначности:
+  // алиасы курируются вручную на сервере, и алиас одной модели может
+  // случайно совпасть с ключом (или алиасом) другой — поэтому здесь тоже
+  // действует общее правило уникальности, а не просто "первый нашёлся".
+  const exactHits = new Set<string>();
   for (const model of models) {
-    if (squash(model.key) === host) return model.key;
-    if (model.aliases.some((alias) => squash(alias) === host)) return model.key;
+    if (squash(model.key) === host || model.aliases.some((alias) => squash(alias) === host)) {
+      exactHits.add(model.key);
+    }
   }
+  if (exactHits.size === 1) return [...exactHits][0];
+  if (exactHits.size > 1) return null; // неоднозначность — это отказ, а не повод угадывать в шаге 2
 
   // Шаг 2. Матч внутри вендора. Без вендора шага нет: сравнивать `max4` со
   // всеми 326 моделями — верный способ выдать чужую картинку.
@@ -101,9 +108,11 @@ export function matchPrinterModel(
     if (!sameNumbers(hostParts.numbers, modelParts.numbers)) continue;
 
     // Односторонне: hostname короче полного имени ("qidi-max4" против
-    // "QIDI X-Max 4"), так что требуем вхождения его токенов в имя, а не наоборот.
-    const modelLetters = modelParts.letters.join('');
-    if (!hostLetters.every((token) => modelLetters.includes(token))) continue;
+    // "QIDI X-Max 4"), так что требуем вхождения его токенов в имя, а не
+    // наоборот. Токен-к-токену, а не в склейку всех токенов модели — иначе
+    // токен хоста может собраться из хвоста одного слова модели и головы
+    // соседнего (склейка "xtra"+"max" даёт "tram", которого в имени нет).
+    if (!hostLetters.every((token) => modelParts.letters.some((modelToken) => modelToken.includes(token)))) continue;
 
     hits.push(model.key);
   }
