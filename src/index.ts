@@ -12,6 +12,20 @@
 export { MoonrakerClient } from './api/moonraker-client';
 export type { GcodeSendEvent } from './api/moonraker-client';
 export { MoonrakerWebSocket, wsUrlFromHttp } from './api/moonraker-ws';
+// `heater_generic` naming: every printer spells its chamber and dryers its own
+// way, so reading a slot and setting its target both resolve through these.
+export {
+  classifyGenericHeater,
+  discoverGenericHeaterObjects,
+  genericHeaterForSlot,
+  genericHeaterLabel,
+  genericHeaterName,
+  genericHeaterSlotNames,
+  genericHeaterSlots,
+  isGenericHeaterKey,
+  parseGenericHeaters,
+} from './api/heaters';
+export type { GenericHeaterSlots } from './api/heaters';
 
 // ─── Types ──────────────────────────────────────────
 export type {
@@ -21,6 +35,8 @@ export type {
   HeaterState,
   HeaterLimits,
   TemperatureData,
+  GenericHeaterKind,
+  GenericHeaterState,
   ToolheadState,
   Position,
   PrintStats,

@@ -41,6 +41,11 @@ import type {
   WebcamConfig,
 } from './types';
 import { parseWebcam } from './webcams';
+import {
+  discoverGenericHeaterObjects,
+  genericHeaterSlots,
+  parseGenericHeaters,
+} from './heaters';
 // Native deps come from a platform-resolved module: Metro picks
 // native-deps.native.ts (static react-native import), other bundlers get the
 // inert stubs in native-deps.ts. A dynamic require(id) here breaks Metro.
@@ -103,6 +108,19 @@ interface RequestControl {
  */
 const GCODE_SEND: RequestControl = { timeoutMs: 10 * 60_000, retries: 0 };
 
+/**
+ * The Protype CD400 layout, used only when `printer.objects.list` says nothing.
+ * A printer that cannot be asked what it has still deserves the heaters we know
+ * how to name — and on a CD400 these ARE the discovered names.
+ */
+const FALLBACK_GENERIC_HEATERS = [
+  'heater_generic Active_Chamber',
+  'heater_generic Drying_Chamber_1',
+  'heater_generic Drying_Chamber_2',
+  'heater_generic Drying_Chamber_3',
+  'heater_generic Drying_Chamber_4',
+];
+
 // ─── Client ────────────────────────────────────────────────
 
 export interface GcodeSendEvent {
@@ -158,6 +176,8 @@ export class MoonrakerClient {
   private timeout: number;
   private maxRetries: number;
   private gcodeObservers = new Set<(ev: GcodeSendEvent) => void>();
+  /** `heater_generic` names from objects.list; see discoverGenericHeaters(). */
+  private genericHeaterCache: string[] | null = null;
 
   constructor(private config: MoonrakerConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
@@ -435,7 +455,31 @@ export class MoonrakerClient {
 
   // ─── Printer Status ────────────────────────────────────
 
+  /**
+   * The `heater_generic` object names this printer defines.
+   *
+   * Cached for the client's lifetime: the status poll runs every few seconds
+   * and a Klipper config cannot gain a heater without a restart, which drops
+   * the connection and builds a new client anyway.
+   */
+  async discoverGenericHeaters(): Promise<string[]> {
+    if (this.genericHeaterCache) return this.genericHeaterCache;
+    const res = await this.get<any>('/printer/objects/list');
+    const names: unknown = res.success ? res.data?.objects : null;
+    // An unanswered list is not evidence the printer has no chamber, so it must
+    // not be cached as an empty result — the next poll asks again.
+    if (!Array.isArray(names)) return FALLBACK_GENERIC_HEATERS;
+    this.genericHeaterCache = discoverGenericHeaterObjects(names as string[]);
+    return this.genericHeaterCache;
+  }
+
   async getPrinterStatus(): Promise<ApiResult<PrinterStatus>> {
+    // Chambers and dryers live under names this printer's own config picked, so
+    // they have to be discovered before they can be queried. Moonraker answers a
+    // query for an object it lacks with `{}` instead of failing it, which is how
+    // one vendor's hardcoded spelling used to make a real chamber vanish.
+    const genericHeaters = await this.discoverGenericHeaters();
+
     // Build query for all relevant objects
     const fsNames = Array.from({ length: 10 }, (_, i) => `FS${i + 1}`);
     const objects = [
@@ -453,11 +497,7 @@ export class MoonrakerClient {
       'extruder',
       'extruder1',
       'heater_bed',
-      'heater_generic Active_Chamber',
-      'heater_generic Drying_Chamber_1',
-      'heater_generic Drying_Chamber_2',
-      'heater_generic Drying_Chamber_3',
-      'heater_generic Drying_Chamber_4',
+      ...genericHeaters,
       'temperature_sensor bed_glass',
       'save_variables',
       'fan',
@@ -561,16 +601,23 @@ export class MoonrakerClient {
         }
       : null;
 
-    // Temperatures
+    // Temperatures. The chamber and dryer slots are derived from whatever
+    // generic heaters this printer reports, so a vendor that spells them its
+    // own way (`chamber`, `heater_box1` on a QIDI) still fills the panel.
+    const genericHeaters = parseGenericHeaters(obj);
+    const slots = genericHeaterSlots(genericHeaters);
     const temperatures: TemperatureData = {
       extruder: this.parseHeater(obj.extruder),
       extruder1: this.parseHeater(obj.extruder1),
       heaterBed: this.parseHeater(obj.heater_bed),
-      heaterChamber: this.parseHeater(obj['heater_generic Active_Chamber']),
-      dryingChamber1: this.parseHeater(obj['heater_generic Drying_Chamber_1']),
-      dryingChamber2: this.parseHeater(obj['heater_generic Drying_Chamber_2']),
+      heaterChamber: slots.heaterChamber,
+      dryingChamber1: slots.dryingChamber1,
+      dryingChamber2: slots.dryingChamber2,
+      // Dryers 3-4 have no slot in the picker and no card in the app; they stay
+      // on the CD400 names, which is the only printer that has that many.
       dryingChamber3: this.parseHeater(obj['heater_generic Drying_Chamber_3']),
       dryingChamber4: this.parseHeater(obj['heater_generic Drying_Chamber_4']),
+      genericHeaters,
       bedGlass: this.parseHeater(obj['temperature_sensor bed_glass']),
     };
 
@@ -675,8 +722,22 @@ export class MoonrakerClient {
     return this.sendGcode(`SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=${target}`);
   }
 
+  /**
+   * Set a `heater_generic` target by its bare Klipper name (`Active_Chamber`,
+   * `chamber`, `heater_box1`, …) — i.e. the object key without the
+   * `heater_generic ` prefix, which is what the G-code command expects.
+   */
+  async setGenericHeaterTemp(name: string, target: number): Promise<ApiResult<void>> {
+    return this.sendGcode(`SET_HEATER_TEMPERATURE HEATER=${name} TARGET=${target}`);
+  }
+
+  /**
+   * @deprecated Addresses the CD400 chamber by name and misses every other
+   * vendor's. Resolve the real name with `genericHeaterName()` and call
+   * `setGenericHeaterTemp` instead.
+   */
   async setChamberTemp(target: number): Promise<ApiResult<void>> {
-    return this.sendGcode(`SET_HEATER_TEMPERATURE HEATER=Active_Chamber TARGET=${target}`);
+    return this.setGenericHeaterTemp('Active_Chamber', target);
   }
 
   // ─── Heater Limits (from configfile) ───────────────────

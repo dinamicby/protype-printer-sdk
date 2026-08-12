@@ -321,6 +321,19 @@ export class MoonrakerWebSocket {
     return this.call('printer.objects.query', { objects });
   }
 
+  /**
+   * Every printer object this Klipper config defines.
+   *
+   * The names of chambers, dryers and sensors are chosen by the printer's own
+   * config, so this is the only way to reach the ones a vendor spells its own
+   * way. Returns `[]` rather than throwing, so a printer that never answers
+   * still gets the hardcoded base subscription.
+   */
+  async listObjects(): Promise<string[]> {
+    const res: any = await this.call('printer.objects.list');
+    return Array.isArray(res?.objects) ? res.objects : [];
+  }
+
   // ─── Events ────────────────────────────────────────────
 
   on(

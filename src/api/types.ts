@@ -69,20 +69,38 @@ export interface HeaterLimits {
   maxTemp: number;
 }
 
+/** What a `heater_generic` is for, guessed from its config name. */
+export type GenericHeaterKind = 'chamber' | 'dryer' | 'other';
+
+/** One `heater_generic` as this printer actually spells it. */
+export interface GenericHeaterState extends HeaterState {
+  /** Full Klipper object key, e.g. "heater_generic heater_box1". */
+  name: string;
+  /** Bare config name `SET_HEATER_TEMPERATURE HEATER=` wants, e.g. "heater_box1". */
+  label: string;
+  kind: GenericHeaterKind;
+}
+
 export interface TemperatureData {
   extruder: HeaterState | null;
   extruder1: HeaterState | null;
   heaterBed: HeaterState | null;
-  /** Optional heated chamber */
+  /** Heated chamber, whatever this printer's config calls it */
   heaterChamber: HeaterState | null;
-  /** Optional drying chamber 1 (generic_heater drying_chamber_1) */
+  /** First filament dryer, in name order */
   dryingChamber1: HeaterState | null;
-  /** Optional drying chamber 2 (generic_heater drying_chamber_2) */
+  /** Second filament dryer, in name order */
   dryingChamber2: HeaterState | null;
   /** Optional drying chamber 3 (generic_heater drying_chamber_3) */
   dryingChamber3: HeaterState | null;
   /** Optional drying chamber 4 (generic_heater drying_chamber_4) */
   dryingChamber4: HeaterState | null;
+  /**
+   * Every `heater_generic` this printer reports, under its real Klipper name.
+   * The chamber and dryer slots above are picks from this list — use it when
+   * the name matters (setting a target) or to reach a heater that fits no slot.
+   */
+  genericHeaters: GenericHeaterState[];
   /** Camera/enclosure temperature sensor */
   bedGlass: HeaterState | null;
 }

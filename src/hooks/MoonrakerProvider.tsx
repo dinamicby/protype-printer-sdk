@@ -28,6 +28,13 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { MoonrakerClient } from '../api/moonraker-client';
 import { MoonrakerWebSocket, wsUrlFromHttp, wsdiag } from '../api/moonraker-ws';
 import type { ConnectionMode, PrinterStatus, MoonrakerConfig } from '../api/types';
+import {
+  classifyGenericHeater,
+  discoverGenericHeaterObjects,
+  genericHeaterLabel,
+  genericHeaterSlots,
+  isGenericHeaterKey,
+} from '../api/heaters';
 import { createPoller } from '../utils/poller';
 import {
   createPrinterStore,
@@ -228,7 +235,7 @@ export function MoonrakerProvider({
           fsSub[`filament_switch_sensor FS${i}`] = null;
           fsSub[`filament_motion_sensor FS${i}`] = null;
         }
-        ws.subscribeObjects({
+        const base: Record<string, null> = {
           print_stats: null,
           virtual_sdcard: null,
           display_status: null,
@@ -237,6 +244,8 @@ export function MoonrakerProvider({
           extruder: null,
           extruder1: null,
           heater_bed: null,
+          // The CD400 chamber and dryers, kept only as the no-objects.list
+          // fallback — this printer's real ones are added from discovery below.
           'heater_generic Active_Chamber': null,
           'heater_generic Drying_Chamber_1': null,
           'heater_generic Drying_Chamber_2': null,
@@ -247,10 +256,22 @@ export function MoonrakerProvider({
           exclude_object: null,
           fan: null,
           ...fsSub,
-        }).then(
-          () => wsdiag('provider: subscribe ACK'),
-          (e) => wsdiag(`provider: subscribe FAIL ${e}`),
-        );
+        };
+
+        // Chamber/dryers under this printer's own spelling. Without this, a
+        // non-CD400 heater only ever refreshes on the slow HTTP heartbeat —
+        // and a failed objects.list must never block the base subscription.
+        ws.listObjects()
+          .then((names) => {
+            for (const name of discoverGenericHeaterObjects(names)) base[name] = null;
+          })
+          .catch((e) => wsdiag(`provider: objects.list FAIL ${e}`))
+          .finally(() => {
+            ws.subscribeObjects(base).then(
+              () => wsdiag('provider: subscribe ACK'),
+              (e) => wsdiag(`provider: subscribe FAIL ${e}`),
+            );
+          });
       }
     };
 
@@ -419,58 +440,70 @@ export function mergeStatusUpdate(
     ? next.displayStatus.progress
     : (next.virtualSdCard?.progress ?? 0);
 
-  // Temperatures
+  // Temperatures.
+  //
+  // Every block spreads `next.temperatures`, not `prev.temperatures`: Moonraker
+  // batches all changed objects into ONE status_update, and temperatures change
+  // on every tick, so spreading `prev` each time kept only the last block's
+  // heater and silently reverted the others.
   if (update.extruder) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       extruder: mergeHeater(prev.temperatures.extruder, update.extruder),
     };
   }
   if (update.extruder1) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       extruder1: mergeHeater(prev.temperatures.extruder1, update.extruder1),
     };
   }
   if (update.heater_bed) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       heaterBed: mergeHeater(prev.temperatures.heaterBed, update.heater_bed),
     };
   }
-  if (update['heater_generic Active_Chamber']) {
+  // Generic heaters (chamber, dryers) under this printer's own names. Merged
+  // by name off the full list, then the slots are re-derived from it — a delta
+  // that mentions only the chamber must not blank the dryer.
+  const genericKeys = Object.keys(update).filter(isGenericHeaterKey);
+  if (genericKeys.length > 0) {
+    const byName = new Map(prev.temperatures.genericHeaters.map((h) => [h.name, h]));
+    for (const key of genericKeys) {
+      const val = update[key];
+      if (!val || typeof val !== 'object') continue;
+      const label = genericHeaterLabel(key);
+      byName.set(key, {
+        name: key,
+        label,
+        kind: classifyGenericHeater(label),
+        ...mergeHeater(byName.get(key) ?? null, val),
+      });
+    }
+    const genericHeaters = [...byName.values()];
     next.temperatures = {
-      ...prev.temperatures,
-      heaterChamber: mergeHeater(prev.temperatures.heaterChamber, update['heater_generic Active_Chamber']),
+      ...next.temperatures,
+      genericHeaters,
+      ...genericHeaterSlots(genericHeaters),
     };
   }
-  if (update['heater_generic Drying_Chamber_1']) {
-    next.temperatures = {
-      ...prev.temperatures,
-      dryingChamber1: mergeHeater(prev.temperatures.dryingChamber1, update['heater_generic Drying_Chamber_1']),
-    };
-  }
-  if (update['heater_generic Drying_Chamber_2']) {
-    next.temperatures = {
-      ...prev.temperatures,
-      dryingChamber2: mergeHeater(prev.temperatures.dryingChamber2, update['heater_generic Drying_Chamber_2']),
-    };
-  }
+  // Dryers 3-4 have no slot in the picker; they stay on the CD400 names.
   if (update['heater_generic Drying_Chamber_3']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       dryingChamber3: mergeHeater(prev.temperatures.dryingChamber3, update['heater_generic Drying_Chamber_3']),
     };
   }
   if (update['heater_generic Drying_Chamber_4']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       dryingChamber4: mergeHeater(prev.temperatures.dryingChamber4, update['heater_generic Drying_Chamber_4']),
     };
   }
   if (update['temperature_sensor bed_glass']) {
     next.temperatures = {
-      ...prev.temperatures,
+      ...next.temperatures,
       bedGlass: mergeHeater(prev.temperatures.bedGlass, update['temperature_sensor bed_glass']),
     };
   }
