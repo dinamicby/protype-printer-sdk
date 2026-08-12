@@ -125,6 +125,22 @@ describe('автоопределённая модель', () => {
     )?.modelName).toBe('QIDI Q1 Pro');
   });
 
+  test('исчезнувший ручной выбор не заменяется догадкой, даже валидной', () => {
+    // Догадка заполняет только пустое место. Слот занят «qidi-gone» — то, что
+    // догадка валидна, роли не играет: до неё очередь не доходит.
+    expect(resolvePrinterModel(
+      { source: 'local', catalogModelKey: 'qidi-gone', autoModelKey: 'qidi-x-max-4' }, index,
+    )).toBeNull();
+  });
+
+  test('незнакомый серверный ключ не заменяется догадкой, даже валидной', () => {
+    // Как и выше: слот занят. Показываем сырой серверный ключ, а не
+    // подставляем модель, которую нашла догадка.
+    expect(resolvePrinterModel(
+      { source: 'cloud', printer_model_key: 'CD400', autoModelKey: 'qidi-x-max-4' }, index,
+    )).toMatchObject({ vendorName: null, modelName: 'cd400', model: null });
+  });
+
   test('догадка про модель, которой в каталоге уже нет, ничего не показывает', () => {
     expect(resolvePrinterModel(
       { source: 'cloud', printer_model_key: null, autoModelKey: 'qidi-gone' }, index,
