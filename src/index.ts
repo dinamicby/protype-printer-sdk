@@ -34,6 +34,16 @@ export type {
   MatchableVendor,
   PrinterIdentity,
 } from './api/match-printer-model';
+// Каталог принтеров: одна реализация резолвера на десктоп и мобилку.
+export { buildCatalogIndex, resolvePrinterModel } from './api/printer-catalog';
+export type {
+  CatalogIndex,
+  CatalogModel,
+  CatalogVendor,
+  PrinterCatalog,
+  ResolvablePrinter,
+  ResolvedPrinterModel,
+} from './api/printer-catalog';
 
 // ─── Types ──────────────────────────────────────────
 export type {
