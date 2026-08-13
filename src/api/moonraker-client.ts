@@ -454,6 +454,58 @@ export class MoonrakerClient {
     };
   }
 
+  // ─── Сырые объекты Moonraker ───────────────────────────
+  //
+  // Общие примитивы, а не удобства: панель подачи спрашивает объекты, имена
+  // которых знает только она (`multi_color_controller` коробки QIDI и прочее
+  // вендорское), а транспорт — заголовки, ретраи и обход ATS через
+  // NativeHTTPModule на CGNAT-адресах — живёт здесь. Класть эти объекты в
+  // `getPrinterStatus()` нельзя: та форма курирована под каскад, и чужой
+  // вендор раздул бы запрос статуса на каждом принтере.
+
+  /** Секции, которые объявил принтер (`/printer/objects/list`). */
+  async listObjects(): Promise<ApiResult<string[]>> {
+    const res = await this.get<any>('/printer/objects/list');
+    if (!res.success) return {success: false, error: res.error};
+    const names: unknown = res.data?.objects;
+    // Не пустой список: он читался бы как «у принтера нет ни одного объекта», и
+    // вызывающий закэшировал бы отсутствие того, чего просто не спросили.
+    if (!Array.isArray(names)) return {success: false, error: 'objects/list вернул не список'};
+    return {success: true, data: names.filter((n): n is string => typeof n === 'string')};
+  }
+
+  /**
+   * Статус названных объектов, как он пришёл, без разбора.
+   *
+   * На неизвестное имя Moonraker отвечает 200 и пустым объектом, а не ошибкой —
+   * проверено живьём. Отличать «объекта нет» от «запрос не прошёл» обязан
+   * вызывающий, поэтому такой ответ здесь успех.
+   */
+  async queryObjects(names: readonly string[]): Promise<ApiResult<Record<string, unknown>>> {
+    // Пустой запрос — это `/printer/objects/query?`, на который Moonraker
+    // отдаёт вообще всё; спрашивать всё, когда не просили ничего, дороже и
+    // неверно по смыслу.
+    if (names.length === 0) return {success: true, data: {}};
+    const query = names.map((n) => encodeURIComponent(n)).join('&');
+    const res = await this.get<any>(`/printer/objects/query?${query}`);
+    if (!res.success) return {success: false, error: res.error};
+    const status = res.data?.status;
+    return status && typeof status === 'object'
+      ? {success: true, data: status as Record<string, unknown>}
+      : {success: false, error: 'objects/query вернул ответ без status'};
+  }
+
+  /** Секции `printer.cfg` так, как их назвал Klipper (регистр сохраняется). */
+  async getConfigSettings(): Promise<ApiResult<Record<string, unknown>>> {
+    const res = await this.get<any>('/printer/objects/query?configfile=settings');
+    if (!res.success) return {success: false, error: res.error};
+    const settings = res.data?.status?.configfile?.settings;
+    if (!settings || typeof settings !== 'object') {
+      return {success: false, error: 'configfile.settings отсутствует'};
+    }
+    return {success: true, data: settings as Record<string, unknown>};
+  }
+
   // ─── Printer Status ────────────────────────────────────
 
   /**
